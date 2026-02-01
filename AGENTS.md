@@ -66,13 +66,13 @@ npm run build
 
 ## Manifest rules (`manifest.json`)
 
-- Must include (non-exhaustive):  
-  - `id` (plugin ID; for local dev it should match the folder name)  
-  - `name`  
-  - `version` (Semantic Versioning `x.y.z`)  
-  - `minAppVersion`  
-  - `description`  
-  - `isDesktopOnly` (boolean)  
+- Must include (non-exhaustive):
+  - `id` (plugin ID; for local dev it should match the folder name)
+  - `name`
+  - `version` (Semantic Versioning `x.y.z`)
+  - `minAppVersion`
+  - `description`
+  - `isDesktopOnly` (boolean)
   - Optional: `author`, `authorUrl`, `fundingUrl` (string or map)
 - Never change `id` after release. Treat it as stable API.
 - Keep `minAppVersion` accurate when using newer APIs.
@@ -167,7 +167,7 @@ import { Plugin } from "obsidian";
 import { MySettings, DEFAULT_SETTINGS } from "./settings";
 import { registerCommands } from "./commands";
 
-export default class MyPlugin extends Plugin {
+export default class Obsync extends Plugin {
   settings: MySettings;
 
   async onload() {
@@ -236,7 +236,7 @@ this.registerInterval(window.setInterval(() => { /* ... */ }, 1000));
 
 ## Troubleshooting
 
-- Plugin doesn't load after build: ensure `main.js` and `manifest.json` are at the top level of the plugin folder under `<Vault>/.obsidian/plugins/<plugin-id>/`. 
+- Plugin doesn't load after build: ensure `main.js` and `manifest.json` are at the top level of the plugin folder under `<Vault>/.obsidian/plugins/<plugin-id>/`.
 - Build issues: if `main.js` is missing, run `npm run build` or `npm run dev` to compile your TypeScript source code.
 - Commands not appearing: verify `addCommand` runs after `onload` and IDs are unique.
 - Settings not persisting: ensure `loadData`/`saveData` are awaited and you re-render the UI after changes.
