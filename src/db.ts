@@ -1,5 +1,9 @@
 import initSqlJs, { Database } from "sql.js";
-import { Plugin } from "obsidian";
+import { Plugin, requestUrl } from "obsidian";
+
+// sql.js WASM hosted on CDN - using requestUrl for Obsidian compatibility
+const SQL_WASM_URL =
+  "https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.13.0/sql-wasm.wasm";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS files (
@@ -51,7 +55,13 @@ export class DbService {
   }
 
   async init(): Promise<void> {
-    const SQL = await initSqlJs();
+    // Fetch WASM binary using Obsidian's requestUrl to avoid CORS/fetch issues
+    const wasmResponse = await requestUrl({ url: SQL_WASM_URL });
+    const wasmBinary = wasmResponse.arrayBuffer;
+
+    const SQL = await initSqlJs({
+      wasmBinary,
+    });
 
     // Try to load existing database
     const adapter = this.plugin.app.vault.adapter;
