@@ -2,14 +2,14 @@ import {App, PluginSettingTab, Setting} from "obsidian";
 import Obsync from "./main";
 
 export interface ObsyncSettings {
-	mySetting: string;
+	checkpointInterval: number;
 }
 
 export const DEFAULT_SETTINGS: ObsyncSettings = {
-	mySetting: 'default'
+	checkpointInterval: 10
 }
 
-export class SampleSettingTab extends PluginSettingTab {
+export class ObsyncSettingTab extends PluginSettingTab {
 	plugin: Obsync;
 
 	constructor(app: App, plugin: Obsync) {
@@ -23,14 +23,17 @@ export class SampleSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Settings #1')
-			.setDesc('It\'s a secret')
+			.setName('Checkpoint interval')
+			.setDesc('Number of versions between full snapshots (lower = faster restore, more storage)')
 			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+				.setPlaceholder('10')
+				.setValue(String(this.plugin.settings.checkpointInterval))
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
-					await this.plugin.saveSettings();
+					const num = parseInt(value, 10);
+					if (!isNaN(num) && num > 0) {
+						this.plugin.settings.checkpointInterval = num;
+						await this.plugin.saveSettings();
+					}
 				}));
 	}
 }

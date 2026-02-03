@@ -1,99 +1,159 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, ObsyncSettings, SampleSettingTab} from "./settings";
-
-// Remember to rename these classes and interfaces!
+import { Notice, Plugin, TFile, TFolder } from "obsidian";
+import { DEFAULT_SETTINGS, ObsyncSettings, ObsyncSettingTab } from "./settings";
+import { DbService } from "./db";
+import HistoryService from "./history";
 
 export default class Obsync extends Plugin {
-	settings: ObsyncSettings;
+  settings: ObsyncSettings;
+  private db: DbService;
+  private history: HistoryService;
 
-	async onload() {
-		await this.loadSettings();
+  async onload() {
+    await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+    // Initialize database
+    this.db = new DbService(this);
+    await this.db.init();
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+    // Initialize history service
+    this.history = new HistoryService(
+      this.db,
+      this.app.vault,
+      this.settings.checkpointInterval
+    );
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+    // Run startup scan
+    await this.startupScan();
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
-		});
+    // Register file modify listener
+    this.registerEvent(
+      this.app.vault.on("modify", async (file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          await this.onFileModify(file);
+        }
+      })
+    );
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+    // Register file delete listener
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          this.history.markDeleted(file.path);
+          this.db.save();
+        }
+      })
+    );
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
+    // Register file rename listener
+    this.registerEvent(
+      this.app.vault.on("rename", async (file, oldPath) => {
+        if (file instanceof TFile && file.extension === "md") {
+          const fileRecord = this.history.getFile(oldPath);
+          if (fileRecord) {
+            this.db.updateFile(fileRecord.id, {
+              path: file.path,
+              updated_at: Date.now(),
+            });
+            await this.db.save();
+          }
+        }
+      })
+    );
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+    // Add settings tab
+    this.addSettingTab(new ObsyncSettingTab(this.app, this));
 
-	}
+    // Status bar showing tracking status
+    const statusBarItemEl = this.addStatusBarItem();
+    statusBarItemEl.setText("Obsync: Active");
 
-	onunload() {
-	}
+    console.log("Obsync plugin loaded");
+  }
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<ObsyncSettings>);
-	}
+  async onunload() {
+    if (this.db) {
+      await this.db.close();
+    }
+    console.log("Obsync plugin unloaded");
+  }
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
+  async loadSettings() {
+    this.settings = Object.assign(
+      {},
+      DEFAULT_SETTINGS,
+      (await this.loadData()) as Partial<ObsyncSettings>
+    );
+  }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+  async saveSettings() {
+    await this.saveData(this.settings);
+    // Update history service with new checkpoint interval
+    if (this.history) {
+      this.history.setCheckpointInterval(this.settings.checkpointInterval);
+    }
+  }
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+  /**
+   * Scan vault on startup to detect new, deleted, and externally modified files.
+   */
+  private async startupScan(): Promise<void> {
+    const trackedFiles = this.history.getAllFiles();
+    const trackedPaths = new Set(trackedFiles.map((f) => f.path));
+    const vaultPaths = new Set<string>();
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+    // Collect all markdown files in vault
+    const processFolder = (folder: TFolder) => {
+      for (const child of folder.children) {
+        if (child instanceof TFile && child.extension === "md") {
+          vaultPaths.add(child.path);
+        } else if (child instanceof TFolder) {
+          processFolder(child);
+        }
+      }
+    };
+    processFolder(this.app.vault.getRoot());
+
+    // Check for new or modified files
+    for (const path of vaultPaths) {
+      if (!trackedPaths.has(path)) {
+        // New file - create initial checkpoint
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) {
+          const content = await this.app.vault.read(file);
+          await this.history.save(path, content);
+        }
+      } else {
+        // Existing file - check if modified externally
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) {
+          const content = await this.app.vault.read(file);
+          const hasChanged = await this.history.hasChanged(path, content);
+          if (hasChanged) {
+            await this.history.save(path, content);
+          }
+        }
+      }
+    }
+
+    // Check for deleted files
+    for (const tracked of trackedFiles) {
+      if (!vaultPaths.has(tracked.path) && tracked.deleted_at === null) {
+        this.history.markDeleted(tracked.path);
+      }
+    }
+
+    await this.db.save();
+    new Notice(`Obsync: Scanned ${vaultPaths.size} files`);
+  }
+
+  /**
+   * Handle file modification event.
+   */
+  private async onFileModify(file: TFile): Promise<void> {
+    const content = await this.app.vault.read(file);
+    const hasChanged = await this.history.hasChanged(file.path, content);
+    if (hasChanged) {
+      await this.history.save(file.path, content);
+    }
+  }
 }
