@@ -1,89 +1,97 @@
-# Obsidian Sample Plugin
+# Obsync
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+**Version history for Obsidian** — Google Docs-like version tracking for your notes.
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+Obsync automatically tracks changes to your markdown files and stores version history locally using diffs. View what changed between versions and restore previous versions with ease.
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+## Features
 
-## First time developing plugins?
+- **Automatic version tracking** — Saves versions automatically when files are modified
+- **Efficient diff storage** — Uses a hybrid approach with diffs and periodic checkpoints to minimize storage
+- **Local-first** — All data stored in a SQLite database within your vault
+- **Startup scan** — Detects new, modified, and deleted files when Obsidian launches
+- **Configurable checkpoints** — Adjust the checkpoint interval to balance storage vs. reconstruction speed
 
-Quick starting guide for new plugin devs:
+## How it works
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+Obsync monitors your markdown files and creates version snapshots:
 
-## Releasing new releases
+1. **Diffs** — Most versions are stored as compact diffs from the previous version
+2. **Checkpoints** — Full snapshots are saved periodically (default: every 10 versions) for fast reconstruction
+3. **SQLite database** — All history is stored in `history.db` within the plugin folder
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+## Installation
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+### From community plugins
 
-## Adding your plugin to the community plugin list
+1. Open **Settings → Community plugins**
+2. Select **Browse** and search for "Obsync"
+3. Select **Install**, then **Enable**
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+### Manual installation
 
-## How to use
+1. Download `main.js`, `manifest.json`, and `styles.css` from the latest release
+2. Create a folder: `<YourVault>/.obsidian/plugins/obsync/`
+3. Copy the downloaded files into the folder
+4. Restart Obsidian and enable the plugin in **Settings → Community plugins**
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+## Settings
 
-## Manually installing the plugin
+| Setting | Default | Description |
+|---------|---------|-------------|
+| Checkpoint interval | 10 | Number of versions between full snapshots. Lower values mean faster version reconstruction but more storage usage. |
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+## Development
 
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
+### Prerequisites
 
-## Funding URL
+- Node.js 18+
+- npm
 
-You can include funding URLs where people who use your plugin can financially support it.
+### Setup
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
-
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+```bash
+npm install
 ```
 
-If you have multiple URLs, you can also do:
+### Development (watch mode)
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
+```bash
+npm run dev
 ```
+
+### Production build
+
+```bash
+npm run build
+```
+
+### Linting
+
+```bash
+npm run lint
+```
+
+### Testing
+
+```bash
+npm run test
+```
+
+## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for detailed technical documentation.
+
+**Key design decisions:**
+
+- **Markdown only** — Focuses on `.md` files; binary files don't diff efficiently
+- **UUIDv7 IDs** — Time-sortable and globally unique for future sync support
+- **sql.js** — WebAssembly SQLite that works in Obsidian's Electron environment
+- **diff-match-patch** — Battle-tested diffing algorithm for text
+
+## License
+
+[MIT](LICENSE)
 
 ## API Documentation
 
