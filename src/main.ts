@@ -14,7 +14,7 @@ export default class Obsync extends Plugin {
     await this.loadSettings();
 
     // Set debug mode from settings
-    logger.level = this.settings.debugMode ? Level.Debug : Level.Info;
+    logger.level = this.settings.debugMode ? Level.Debug : Level.None;
     logger.info("Obsync plugin loading...", field("context", "Plugin"));
 
     // Initialize database

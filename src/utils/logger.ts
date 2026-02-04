@@ -7,5 +7,5 @@ import { Logger, BrowserFormatter, Level } from "@coder/logger";
 const formatter = new BrowserFormatter();
 export const logger = new Logger(formatter, "Obsync");
 
-// Start at info level by default
-logger.level = Level.Info;
+// Disable logging by default (only enabled when debug mode is on)
+logger.level = Level.None;
