@@ -4,6 +4,7 @@ import { DbService } from "./db";
 import HistoryService from "./history";
 import { logger } from "./utils/logger";
 import { Level, field } from "@coder/logger";
+import HistoryModal from "./ui/HistoryModal";
 
 export default class Obsync extends Plugin {
   settings: ObsyncSettings;
@@ -77,6 +78,38 @@ export default class Obsync extends Plugin {
 
     // Add settings tab
     this.addSettingTab(new ObsyncSettingTab(this.app, this));
+
+    // Register commands
+    this.addCommand({
+      id: "obsync-show-version-history",
+      name: "Show version history for current file",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        const isMarkdown = file instanceof TFile && file.extension === "md";
+        if (checking) {
+          return isMarkdown;
+        }
+        if (file && isMarkdown) {
+          this.openHistoryModal(file);
+          return true;
+        }
+        return false;
+      },
+    });
+
+    // Register file menu item
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          menu.addItem((item) => {
+            item
+              .setTitle("Obsync history")
+              .setIcon("history")
+              .onClick(() => this.openHistoryModal(file));
+          });
+        }
+      })
+    );
 
     // Status bar showing tracking status
     const statusBarItemEl = this.addStatusBarItem();
@@ -187,5 +220,9 @@ export default class Obsync extends Plugin {
     } else {
       logger.debug(`No content change detected: ${file.path}`, field("context", "FileModify"));
     }
+  }
+
+  private openHistoryModal(file: TFile): void {
+    new HistoryModal(this.app, this.history, file).open();
   }
 }

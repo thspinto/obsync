@@ -1,8 +1,164 @@
-/*
+.obsync-history-modal {
+	width: 95vw;
+	height: 90vh;
+	max-width: 95vw;
+	max-height: 90vh;
+}
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+.obsync-history-modal .modal-content {
+	width: 100%;
+	height: 100%;
+	max-width: 100%;
+	max-height: 100%;
+	padding: 16px;
+	box-sizing: border-box;
+}
 
-If your plugin does not need CSS, delete this file.
+.obsync-history-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 12px;
+}
 
-*/
+.obsync-history-title {
+	margin: 0;
+	font-size: 1.1rem;
+}
+
+.obsync-history-actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.obsync-toggle-container {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.obsync-toggle-label {
+	font-size: 0.9rem;
+	color: var(--text-normal);
+}
+
+.obsync-toggle-wrapper {
+	position: relative;
+	display: inline-block;
+	width: 40px;
+	height: 20px;
+}
+
+.obsync-toggle-input {
+	opacity: 0;
+	width: 0;
+	height: 0;
+	position: absolute;
+}
+
+.obsync-toggle-slider {
+	position: absolute;
+	cursor: pointer;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background-color: var(--background-modifier-border);
+	border-radius: 20px;
+	transition: background-color 0.2s;
+}
+
+.obsync-toggle-slider:before {
+	position: absolute;
+	content: "";
+	height: 14px;
+	width: 14px;
+	left: 3px;
+	bottom: 3px;
+	background-color: white;
+	border-radius: 50%;
+	transition: transform 0.2s;
+}
+
+.obsync-toggle-input:checked + .obsync-toggle-slider {
+	background-color: var(--interactive-accent);
+}
+
+.obsync-toggle-input:checked + .obsync-toggle-slider:before {
+	transform: translateX(20px);
+}
+
+.obsync-toggle-input:disabled + .obsync-toggle-slider {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+.obsync-history-body {
+	display: grid;
+	grid-template-columns: 200px minmax(0, 1fr);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	overflow: hidden;
+	height: calc(100% - 50px);
+	background: var(--background-primary);
+}
+
+.obsync-history-list {
+	background: var(--background-secondary);
+	border-right: 1px solid var(--background-modifier-border);
+	overflow: hidden;
+}
+
+.obsync-history-list-items {
+	height: 100%;
+	overflow-y: auto;
+}
+
+.obsync-history-version-item {
+	padding: 8px 12px;
+	cursor: pointer;
+	border-bottom: 1px solid var(--background-modifier-border);
+	font-size: 0.9rem;
+}
+
+.obsync-history-version-item:hover {
+	background: var(--background-modifier-hover);
+}
+
+.obsync-history-version-item.is-selected {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.obsync-history-preview {
+	padding: 12px;
+	overflow: auto;
+	font-family: var(--font-monospace);
+	font-size: 0.9rem;
+	white-space: pre-wrap;
+	background: var(--background-primary);
+}
+
+.obsync-history-preview-text {
+	margin: 0;
+	font-family: inherit;
+	font-size: inherit;
+	white-space: pre-wrap;
+}
+
+.obsync-history-diff-add {
+	color: var(--text-success);
+}
+
+.obsync-history-diff-del {
+	color: var(--text-error);
+	text-decoration: line-through;
+}
+
+.obsync-history-empty,
+.obsync-history-loading {
+	padding: 12px;
+	color: var(--text-muted);
+}

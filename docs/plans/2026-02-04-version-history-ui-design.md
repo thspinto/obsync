@@ -7,13 +7,13 @@ A modal UI for browsing and restoring file version history in obsync.
 ## Access Points
 
 - **Command palette**: "Show version history for current file"
-- **File menu**: Right-click on .md file → "View version history"
+- **File menu**: Right-click on .md file → "Obsync history"
 
 ## Modal Layout
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Version History: note.md              [⇄ Diff] [Restore] ✕│
+│  Version History: note.md                 [⇄ Diff] [Restore]│
 ├──────────────────┬──────────────────────────────────────────┤
 │                  │                                          │
 │  Today 2:34 PM ◀ │  # My Note                               │
