@@ -1,5 +1,7 @@
 import initSqlJs, { Database } from "sql.js";
 import { Plugin, requestUrl } from "obsidian";
+import { logger } from "./utils/logger";
+import { field } from "@coder/logger";
 
 // sql.js WASM hosted on CDN - using requestUrl for Obsidian compatibility
 const SQL_WASM_URL =
@@ -55,7 +57,9 @@ export class DbService {
   }
 
   async init(): Promise<void> {
+    logger.debug("Initializing database", field("context", "DB"));
     // Fetch WASM binary using Obsidian's requestUrl to avoid CORS/fetch issues
+    logger.debug(`Fetching SQL.js WASM from ${SQL_WASM_URL}`, field("context", "DB"));
     const wasmResponse = await requestUrl({ url: SQL_WASM_URL });
     const wasmBinary = wasmResponse.arrayBuffer;
 
@@ -66,28 +70,36 @@ export class DbService {
     // Try to load existing database
     const adapter = this.plugin.app.vault.adapter;
     if (await adapter.exists(this.dbPath)) {
+      logger.debug(`Loading existing database from ${this.dbPath}`, field("context", "DB"));
       const data = await adapter.readBinary(this.dbPath);
       this.db = new SQL.Database(new Uint8Array(data));
     } else {
+      logger.debug("Creating new database", field("context", "DB"));
       this.db = new SQL.Database();
     }
 
     // Run migrations
+    logger.debug("Running schema migrations", field("context", "DB"));
     this.db.run(SCHEMA);
     await this.save();
+    logger.info("Database initialized successfully", field("context", "DB"));
   }
 
   async save(): Promise<void> {
     if (!this.db) return;
+    logger.debug("Saving database to disk", field("context", "DB"));
     const data = this.db.export();
     await this.plugin.app.vault.adapter.writeBinary(this.dbPath, data);
+    logger.debug(`Database saved (${data.length} bytes)`, field("context", "DB"));
   }
 
   async close(): Promise<void> {
     if (this.db) {
+      logger.debug("Closing database", field("context", "DB"));
       await this.save();
       this.db.close();
       this.db = null;
+      logger.info("Database closed", field("context", "DB"));
     }
   }
 
@@ -150,6 +162,7 @@ export class DbService {
 
   insertFile(file: FileRecord): void {
     if (!this.db) return;
+    logger.debug(`Inserting file record: ${file.path}`, field("context", "DB"), field("id", file.id));
     this.db.run(
       "INSERT INTO files (id, path, deleted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
       [file.id, file.path, file.deleted_at, file.created_at, file.updated_at]
@@ -158,6 +171,7 @@ export class DbService {
 
   updateFile(id: string, updates: Partial<Pick<FileRecord, "path" | "deleted_at" | "updated_at">>): void {
     if (!this.db) return;
+    logger.debug(`Updating file record: ${id}`, field("context", "DB"), field("updates", updates));
     const setClauses: string[] = [];
     const values: (string | number | null)[] = [];
 
@@ -271,6 +285,11 @@ export class DbService {
 
   insertVersion(version: VersionRecord): void {
     if (!this.db) return;
+    logger.debug(`Inserting version: v${version.version_num} for file ${version.file_id}`,
+      field("context", "DB"),
+      field("is_checkpoint", version.is_checkpoint),
+      field("data_size", version.data.length)
+    );
     this.db.run(
       "INSERT INTO versions (id, file_id, version_num, is_checkpoint, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       [

@@ -40,6 +40,7 @@ Obsync monitors your markdown files and creates version snapshots:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Checkpoint interval | 10 | Number of versions between full snapshots. Lower values mean faster version reconstruction but more storage usage. |
+| Debug mode | false | Enable detailed debug logging in the console for troubleshooting. Requires plugin reload. See [Debug Logging](docs/debug-logging.md) for details. |
 
 ## Development
 

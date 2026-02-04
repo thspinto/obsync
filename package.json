@@ -30,6 +30,7 @@
 		"vitest": "^1.6.1"
 	},
 	"dependencies": {
+		"@coder/logger": "^3.0.1",
 		"diff-match-patch-ts": "^0.8.0",
 		"obsidian": "latest",
 		"sql.js": "^1.13.0"

@@ -3,10 +3,12 @@ import Obsync from "./main";
 
 export interface ObsyncSettings {
 	checkpointInterval: number;
+	debugMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: ObsyncSettings = {
-	checkpointInterval: 10
+	checkpointInterval: 10,
+	debugMode: false
 }
 
 export class ObsyncSettingTab extends PluginSettingTab {
@@ -34,6 +36,16 @@ export class ObsyncSettingTab extends PluginSettingTab {
 						this.plugin.settings.checkpointInterval = num;
 						await this.plugin.saveSettings();
 					}
+				}));
+
+		new Setting(containerEl)
+			.setName('Debug mode')
+			.setDesc('Enable detailed debug logging in the console (requires reload)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.debugMode)
+				.onChange(async (value) => {
+					this.plugin.settings.debugMode = value;
+					await this.plugin.saveSettings();
 				}));
 	}
 }
