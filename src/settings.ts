@@ -2,12 +2,12 @@ import {App, PluginSettingTab, Setting} from "obsidian";
 import Obsync from "./main";
 
 export interface ObsyncSettings {
-	checkpointInterval: number;
+	snapshotIntervalMinutes: number;
 	debugMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: ObsyncSettings = {
-	checkpointInterval: 10,
+	snapshotIntervalMinutes: 10,
 	debugMode: false
 }
 
@@ -25,15 +25,15 @@ export class ObsyncSettingTab extends PluginSettingTab {
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Checkpoint interval')
-			.setDesc('Number of versions between full snapshots (lower = faster restore, more storage)')
+			.setName('Snapshot interval (minutes)')
+			.setDesc('How often to create snapshots for files with recent changes')
 			.addText(text => text
 				.setPlaceholder('10')
-				.setValue(String(this.plugin.settings.checkpointInterval))
+				.setValue(String(this.plugin.settings.snapshotIntervalMinutes))
 				.onChange(async (value) => {
 					const num = parseInt(value, 10);
 					if (!isNaN(num) && num > 0) {
-						this.plugin.settings.checkpointInterval = num;
+						this.plugin.settings.snapshotIntervalMinutes = num;
 						await this.plugin.saveSettings();
 					}
 				}));

@@ -10,6 +10,7 @@ export default class Obsync extends Plugin {
   settings: ObsyncSettings;
   private db: DbService;
   private history: HistoryService;
+  private snapshotDaemonInterval: number | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -24,16 +25,15 @@ export default class Obsync extends Plugin {
     await this.db.init();
 
     // Initialize history service
-    logger.debug("Initializing history service", field("context", "Plugin"), field("checkpointInterval", this.settings.checkpointInterval));
-    this.history = new HistoryService(
-      this.db,
-      this.app.vault,
-      this.settings.checkpointInterval
-    );
+    logger.debug("Initializing history service", field("context", "Plugin"));
+    this.history = new HistoryService(this.db, this.app.vault);
 
     // Run startup scan
     logger.debug("Starting initial vault scan", field("context", "Plugin"));
     await this.startupScan();
+
+    // Start snapshot daemon
+    this.startSnapshotDaemon();
 
     // Register file modify listener
     logger.debug("Registering file modify listener", field("context", "Plugin"));
@@ -120,6 +120,7 @@ export default class Obsync extends Plugin {
 
   async onunload() {
     logger.info("Obsync plugin unloading...", field("context", "Plugin"));
+    this.stopSnapshotDaemon();
     if (this.db) {
       logger.debug("Closing database", field("context", "Plugin"));
       await this.db.close();
@@ -141,10 +142,35 @@ export default class Obsync extends Plugin {
     await this.saveData(this.settings);
     // Update debug mode
     logger.level = this.settings.debugMode ? Level.Debug : Level.Info;
-    // Update history service with new checkpoint interval
+    // Restart snapshot daemon if interval changed
     if (this.history) {
-      this.history.setCheckpointInterval(this.settings.checkpointInterval);
+      this.restartSnapshotDaemon();
     }
+  }
+
+  private startSnapshotDaemon(): void {
+    logger.debug("Starting snapshot daemon", field("context", "Plugin"), field("intervalMinutes", this.settings.snapshotIntervalMinutes));
+    // Run immediately on startup
+    this.history.runSnapshotDaemon();
+
+    // Then run on interval
+    const intervalMs = this.settings.snapshotIntervalMinutes * 60 * 1000;
+    this.snapshotDaemonInterval = window.setInterval(() => {
+      this.history.runSnapshotDaemon();
+    }, intervalMs);
+  }
+
+  private stopSnapshotDaemon(): void {
+    if (this.snapshotDaemonInterval !== null) {
+      logger.debug("Stopping snapshot daemon", field("context", "Plugin"));
+      window.clearInterval(this.snapshotDaemonInterval);
+      this.snapshotDaemonInterval = null;
+    }
+  }
+
+  private restartSnapshotDaemon(): void {
+    this.stopSnapshotDaemon();
+    this.startSnapshotDaemon();
   }
 
   /**

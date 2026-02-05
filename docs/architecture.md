@@ -9,8 +9,9 @@ Obsync is an Obsidian plugin that tracks file versions using diffs, storing hist
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
 | **Trigger** | On file save | Aligns with user expectations; saves are intentional checkpoints |
-| **Storage** | Hybrid (diffs + checkpoints) | Balances storage efficiency with reconstruction speed |
-| **Checkpoint interval** | Configurable (default: 10) | At most 10 patches to reconstruct any version |
+| **Storage** | Hybrid (diffs + snapshots) | Balances storage efficiency with reconstruction speed |
+| **Snapshot strategy** | Daemon-based (default: 10 min) | First version is always a snapshot; daemon creates periodic snapshots for files with changes |
+| **Max snapshots per file** | 2 (first + daemon) | Keeps storage bounded while ensuring fast reconstruction |
 | **File scope** | Markdown only (`.md`) | Core Obsidian content; binary files don't diff well |
 | **Deleted files** | Keep history forever | History is the point; mark `deleted_at` for UI purposes |
 | **Restoration** | In-place | Simple, direct; overwrites or recreates file |
@@ -26,6 +27,7 @@ graph TB
         onunload[onunload]
         startupScan[startupScan]
         onFileModify[onFileModify]
+        snapshotDaemon[Snapshot Daemon]
     end
 
     subgraph Events["Vault Events"]
@@ -49,6 +51,7 @@ graph TB
     onload --> DB
     onload --> History
     onload --> startupScan
+    onload --> snapshotDaemon
     onload --> Events
 
     modify --> onFileModify
@@ -56,11 +59,13 @@ graph TB
     rename --> DB
 
     onFileModify --> History
+    snapshotDaemon --> History
     History --> DB
     History --> DMP
     History --> UUID
     DB --> SQLite
 
+    onunload --> snapshotDaemon
     onunload --> DB
 ```
 
@@ -78,7 +83,7 @@ sequenceDiagram
     P->>DB: init()
     DB->>DB: Load or create SQLite DB
     DB->>DB: Run migrations
-    P->>H: new HistoryService(db, vault, interval)
+    P->>H: new HistoryService(db, vault)
     P->>P: startupScan()
 
     loop For each .md file in vault
@@ -95,6 +100,9 @@ sequenceDiagram
     end
 
     P->>DB: save()
+    P->>P: startSnapshotDaemon()
+    P->>H: runSnapshotDaemon() (immediate)
+    P->>P: setInterval(runSnapshotDaemon)
 ```
 
 ### On File Save
@@ -117,12 +125,12 @@ sequenceDiagram
         H->>DB: getFileByPath(path)
         H->>DB: getLatestVersion(fileId)
 
-        alt First version or checkpoint interval
-            H->>H: Store full content
-        else Regular version
+        alt First version (no previous)
+            H->>H: Store full content (snapshot)
+        else Subsequent version
             H->>H: reconstructVersion(previous)
             H->>DMP: patch_make(previous, current)
-            H->>H: Store patch
+            H->>H: Store patch (diff)
         end
 
         H->>DB: insertVersion(version)
@@ -153,6 +161,40 @@ sequenceDiagram
     H-->>H: Reconstructed content
 ```
 
+### Snapshot Daemon
+
+The snapshot daemon runs periodically (default: every 10 minutes) to create snapshots for files that have been modified since the last snapshot. This ensures reconstruction never requires applying too many diffs.
+
+```mermaid
+sequenceDiagram
+    participant P as Plugin
+    participant H as HistoryService
+    participant DB as DbService
+
+    P->>H: runSnapshotDaemon()
+    H->>DB: getAllFiles()
+    DB-->>H: files[]
+
+    loop For each non-deleted file
+        H->>DB: getLatestVersion(fileId)
+
+        alt Latest is NOT a snapshot
+            H->>H: reconstructVersion(latest)
+            H->>DB: insertVersion(new snapshot)
+            H->>DB: deleteNonFirstCheckpoints(fileId, newId)
+            Note over H,DB: Keeps first version + new snapshot
+        end
+    end
+
+    H->>DB: save()
+```
+
+**Key behaviors:**
+- Runs immediately on plugin startup, then every N minutes
+- Only creates snapshot if latest version is a diff
+- Deletes previous daemon-created snapshots (keeps max 2 per file: first + latest)
+- Restarts when settings change
+
 ## Database Schema
 
 ```mermaid
@@ -180,39 +222,53 @@ erDiagram
 
 ```mermaid
 graph LR
-    subgraph "Version Chain (interval=10)"
-        V1[v1<br/>Checkpoint]
+    subgraph "Version Chain (daemon-based snapshots)"
+        V1[v1<br/>First Snapshot]
         V2[v2<br/>Diff]
         V3[v3<br/>Diff]
         V4[...]
-        V10[v10<br/>Checkpoint]
-        V11[v11<br/>Diff]
-        V12[...]
-        V20[v20<br/>Checkpoint]
+        V10[v10<br/>Diff]
+        V11[v11<br/>Daemon Snapshot]
+        V12[v12<br/>Diff]
+        V13[...]
+        V20[v20<br/>Diff]
+        V21[v21<br/>Daemon Snapshot]
     end
 
-    V1 --> V2 --> V3 --> V4 --> V10
-    V10 --> V11 --> V12 --> V20
+    V1 --> V2 --> V3 --> V4 --> V10 --> V11
+    V11 --> V12 --> V13 --> V20 --> V21
 
     style V1 fill:#4CAF50,color:#fff
-    style V10 fill:#4CAF50,color:#fff
-    style V20 fill:#4CAF50,color:#fff
+    style V11 fill:#2196F3,color:#fff
+    style V21 fill:#2196F3,color:#fff
 ```
 
+**Legend:**
+- 🟢 Green: First version snapshot (kept forever)
+- 🔵 Blue: Daemon-created snapshot (only latest kept)
+
+**Snapshot lifecycle:**
+1. First save → v1 is always a full snapshot
+2. Subsequent saves → diffs only
+3. Daemon runs (every 10 min) → creates snapshot if latest is a diff
+4. When daemon creates v21, it deletes v11 (keeps only first + latest snapshot)
+
 **Reconstruction example (v15):**
-1. Find nearest checkpoint: v10
-2. Load v10 (full content)
-3. Apply patches: v11, v12, v13, v14, v15
+1. Find nearest checkpoint: v11 (daemon snapshot)
+2. Load v11 (full content)
+3. Apply patches: v12, v13, v14, v15
 4. Result: content at v15
 
 ## File Structure
 
 ```
 src/
-├── main.ts           # Plugin lifecycle, event hooks
-├── settings.ts       # Settings interface (checkpointInterval)
-├── history.ts        # HistoryService (save, diff, reconstruct, restore)
+├── main.ts           # Plugin lifecycle, event hooks, snapshot daemon
+├── settings.ts       # Settings interface (snapshotIntervalMinutes)
+├── history.ts        # HistoryService (save, diff, reconstruct, restore, runSnapshotDaemon)
 ├── db.ts             # SQLite wrapper (connection, migrations, queries)
+├── ui/
+│   └── HistoryModal.ts  # Version history UI
 └── utils/
     └── uuid.ts       # UUIDv7 generation
 ```
@@ -249,10 +305,10 @@ flowchart TD
 
     ForEach --> InDB{In database?}
 
-    InDB -->|No| NewFile[Create file record<br/>+ initial checkpoint]
+    InDB -->|No| NewFile[Create file record<br/>+ initial snapshot]
     InDB -->|Yes| Changed{Content changed?}
 
-    Changed -->|Yes| SaveVersion[Create new version]
+    Changed -->|Yes| SaveVersion[Create new version<br/>diff only]
     Changed -->|No| Skip[Skip]
 
     NewFile --> Next[Next file]
@@ -271,7 +327,10 @@ flowchart TD
     MarkDeleted --> NextD[Next tracked file]
     SkipD --> NextD
     NextD --> ForDeleted
-    NextD -->|Done| Done[Scan complete]
+    NextD -->|Done| StartDaemon[Start Snapshot Daemon]
+    StartDaemon --> RunImmediate[Run daemon immediately]
+    RunImmediate --> SetInterval[Set interval for periodic runs]
+    SetInterval --> Done[Startup complete]
 ```
 
 ## Dependencies

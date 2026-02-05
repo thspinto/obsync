@@ -8,24 +8,17 @@ import { field } from "@coder/logger";
 export default class HistoryService {
   private db: DbService;
   private vault: Vault;
-  private checkpointInterval: number;
   private dmp: DiffMatchPatch;
 
-  constructor(db: DbService, vault: Vault, checkpointInterval: number) {
+  constructor(db: DbService, vault: Vault) {
     this.db = db;
     this.vault = vault;
-    this.checkpointInterval = checkpointInterval;
     this.dmp = new DiffMatchPatch();
-  }
-
-  setCheckpointInterval(interval: number): void {
-    logger.debug(`Setting checkpoint interval to ${interval}`, field("context", "History"));
-    this.checkpointInterval = interval;
   }
 
   /**
    * Save a new version of a file.
-   * Creates a diff from the last version, or a full checkpoint if needed.
+   * First version is always a snapshot, subsequent versions are diffs.
    */
   async save(filePath: string, content: string): Promise<void> {
     logger.debug(`Saving version for file: ${filePath}`,
@@ -54,26 +47,18 @@ export default class HistoryService {
       }
     }
 
-    // Get latest version
+    // Get latest version to determine if this is the first version
     const latestVersion = this.db.getLatestVersion(file.id);
-    const versionCount = this.db.getVersionCount(file.id);
-    const nextVersionCount = versionCount + 1;
-
-    // Determine if this should be a checkpoint
-    const isCheckpoint = nextVersionCount === 1 || nextVersionCount % this.checkpointInterval === 0;
-    logger.debug(`Version count ${nextVersionCount} - Checkpoint: ${isCheckpoint}`,
-      field("context", "History"),
-      field("checkpointInterval", this.checkpointInterval)
-    );
+    const isFirstVersion = !latestVersion;
 
     let data: string;
-    if (isCheckpoint) {
-      // Store full content
-      logger.debug("Storing full checkpoint", field("context", "History"));
+    if (isFirstVersion) {
+      // First version is always a full snapshot
+      logger.debug("Storing first version as snapshot", field("context", "History"));
       data = content;
     } else {
-      // Compute and store diff from previous version
-      const previousContent = await this.reconstructVersion(file.id, latestVersion!.created_at);
+      // All subsequent versions are diffs
+      const previousContent = await this.reconstructVersion(file.id, latestVersion.created_at);
       if (previousContent === content) {
         // No actual change, skip
         logger.debug("No content change detected, skipping version save", field("context", "History"));
@@ -89,7 +74,7 @@ export default class HistoryService {
     const version: VersionRecord = {
       id: uuidv7(),
       file_id: file.id,
-      is_checkpoint: isCheckpoint,
+      is_checkpoint: isFirstVersion,
       data: data,
       created_at: now,
     };
@@ -100,7 +85,7 @@ export default class HistoryService {
 
     // Persist to disk
     await this.db.save();
-    logger.info(`Version saved for ${filePath}`, field("context", "History"), field("is_checkpoint", isCheckpoint));
+    logger.info(`Version saved for ${filePath}`, field("context", "History"), field("is_snapshot", isFirstVersion));
   }
 
   /**
@@ -271,5 +256,77 @@ export default class HistoryService {
 
     const lastContent = await this.reconstructVersion(file.id, latestVersion.created_at);
     return content !== lastContent;
+  }
+
+  /**
+   * Create a snapshot for a file if the latest version is not already a snapshot.
+   * Deletes any previous daemon-created snapshots (keeps only the first version snapshot).
+   */
+  async createSnapshotIfNeeded(fileId: string): Promise<boolean> {
+    const file = this.db.getFileById(fileId);
+    if (!file || file.deleted_at !== null) {
+      return false;
+    }
+
+    const latestVersion = this.db.getLatestVersion(fileId);
+    if (!latestVersion) {
+      return false;
+    }
+
+    // If latest version is already a snapshot, nothing to do
+    if (latestVersion.is_checkpoint) {
+      logger.debug(`Latest version is already a snapshot for file ${file.path}`, field("context", "SnapshotDaemon"));
+      return false;
+    }
+
+    // Reconstruct current content
+    const content = await this.reconstructVersion(fileId, latestVersion.created_at);
+
+    // Create new snapshot
+    const now = Date.now();
+    const version: VersionRecord = {
+      id: uuidv7(),
+      file_id: fileId,
+      is_checkpoint: true,
+      data: content,
+      created_at: now,
+    };
+    this.db.insertVersion(version);
+
+    // Delete any previous daemon-created snapshots (keep first version + this new one)
+    this.db.deleteNonFirstCheckpoints(fileId, version.id);
+
+    // Update file timestamp
+    this.db.updateFile(fileId, { updated_at: now });
+
+    logger.info(`Snapshot created for ${file.path}`, field("context", "SnapshotDaemon"));
+    return true;
+  }
+
+  /**
+   * Run the snapshot daemon - creates snapshots for files where the latest version is not a snapshot.
+   */
+  async runSnapshotDaemon(): Promise<void> {
+    logger.debug("Running snapshot daemon", field("context", "SnapshotDaemon"));
+    const files = this.db.getAllFiles();
+    let snapshotsCreated = 0;
+
+    for (const file of files) {
+      if (file.deleted_at !== null) {
+        continue;
+      }
+
+      const created = await this.createSnapshotIfNeeded(file.id);
+      if (created) {
+        snapshotsCreated++;
+      }
+    }
+
+    if (snapshotsCreated > 0) {
+      await this.db.save();
+      logger.info(`Snapshot daemon completed: ${snapshotsCreated} snapshots created`, field("context", "SnapshotDaemon"));
+    } else {
+      logger.debug("Snapshot daemon completed: no snapshots needed", field("context", "SnapshotDaemon"));
+    }
   }
 }

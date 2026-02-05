@@ -308,4 +308,45 @@ export class DbService {
     stmt.free();
     return 0;
   }
+
+  getFirstVersion(fileId: string): VersionRecord | null {
+    if (!this.db) return null;
+    const stmt = this.db.prepare(
+      "SELECT * FROM versions WHERE file_id = ? ORDER BY created_at ASC LIMIT 1"
+    );
+    stmt.bind([fileId]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject() as Record<string, unknown>;
+      stmt.free();
+      return {
+        id: row.id as string,
+        file_id: row.file_id as string,
+        is_checkpoint: Boolean(row.is_checkpoint),
+        data: row.data as string,
+        created_at: row.created_at as number,
+      };
+    }
+    stmt.free();
+    return null;
+  }
+
+  deleteNonFirstCheckpoints(fileId: string, exceptVersionId?: string): void {
+    if (!this.db) return;
+    const firstVersion = this.getFirstVersion(fileId);
+    if (!firstVersion) return;
+
+    let sql = "DELETE FROM versions WHERE file_id = ? AND is_checkpoint = 1 AND id != ?";
+    const params: (string | number)[] = [fileId, firstVersion.id];
+
+    if (exceptVersionId) {
+      sql += " AND id != ?";
+      params.push(exceptVersionId);
+    }
+
+    logger.debug(`Deleting non-first checkpoints for file ${fileId}`,
+      field("context", "DB"),
+      field("exceptVersionId", exceptVersionId)
+    );
+    this.db.run(sql, params);
+  }
 }

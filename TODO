@@ -1,0 +1,8 @@
+[ ] Create a strategy to compact the versions to that changes are not too fine grained. Also avoid making the compaction too coarse.
+[ ] If network is available sync versions to a remote server, if not, keep them locally and sync when network is available.
+[ ] Create a strategy to handle conflicts when syncing versions to the remote server.
+  [ ] Track which versions were synced and which were not.
+  [ ] Unsynced versions cannont be compacted until they are synced to avoid losing unsynced versions.
+[ ] Server needs to know the device id
+[ ] Server api auth
+[ ] What happens with conflicting changes?
