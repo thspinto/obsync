@@ -3,6 +3,5 @@
 [ ] Create a strategy to handle conflicts when syncing versions to the remote server.
   [ ] Track which versions were synced and which were not.
   [ ] Unsynced versions cannont be compacted until they are synced to avoid losing unsynced versions.
-[ ] Server needs to know the device id
-[ ] Server api auth
 [ ] What happens with conflicting changes?
+[ ] Add manual sync command

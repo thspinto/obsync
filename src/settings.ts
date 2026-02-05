@@ -28,6 +28,7 @@ export class ObsyncSettingTab extends PluginSettingTab {
 	constructor(app: App, plugin: Obsync) {
 		super(app, plugin);
 		this.plugin = plugin;
+		this.plugin.settings.vaultId = this.plugin.app.vault.getName()
 	}
 
 	display(): void {
@@ -99,17 +100,6 @@ export class ObsyncSettingTab extends PluginSettingTab {
 						this.plugin.settings.vaultId = "";
 						await this.plugin.saveSettings();
 						this.display(); // Refresh UI
-					}));
-
-			new Setting(containerEl)
-				.setName('Vault ID')
-				.setDesc('The vault ID on the server to sync with')
-				.addText(text => text
-					.setPlaceholder('vault-id')
-					.setValue(this.plugin.settings.vaultId)
-					.onChange(async (value) => {
-						this.plugin.settings.vaultId = value.trim();
-						await this.plugin.saveSettings();
 					}));
 		}
 	}
