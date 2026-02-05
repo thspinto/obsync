@@ -15,14 +15,12 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS versions (
   id TEXT PRIMARY KEY,
   file_id TEXT NOT NULL REFERENCES files(id),
-  version_num INTEGER NOT NULL,
   is_checkpoint INTEGER NOT NULL,
   data TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  UNIQUE(file_id, version_num)
+  created_at INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_versions_file ON versions(file_id, version_num DESC);
+CREATE INDEX IF NOT EXISTS idx_versions_file ON versions(file_id, created_at DESC);
 `;
 
 /**
@@ -85,7 +83,7 @@ class TestDbAdapter {
   }
 
   getLatestVersion(fileId: string): VersionRecord | null {
-    const stmt = this.db.prepare("SELECT * FROM versions WHERE file_id = ? ORDER BY version_num DESC LIMIT 1");
+    const stmt = this.db.prepare("SELECT * FROM versions WHERE file_id = ? ORDER BY created_at DESC LIMIT 1");
     stmt.bind([fileId]);
     if (stmt.step()) {
       const row = stmt.getAsObject() as Record<string, unknown>;
@@ -93,7 +91,6 @@ class TestDbAdapter {
       return {
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -103,18 +100,17 @@ class TestDbAdapter {
     return null;
   }
 
-  getNearestCheckpoint(fileId: string, beforeVersion: number): VersionRecord | null {
+  getNearestCheckpoint(fileId: string, beforeTimestamp: number): VersionRecord | null {
     const stmt = this.db.prepare(
-      "SELECT * FROM versions WHERE file_id = ? AND version_num <= ? AND is_checkpoint = 1 ORDER BY version_num DESC LIMIT 1"
+      "SELECT * FROM versions WHERE file_id = ? AND created_at <= ? AND is_checkpoint = 1 ORDER BY created_at DESC LIMIT 1"
     );
-    stmt.bind([fileId, beforeVersion]);
+    stmt.bind([fileId, beforeTimestamp]);
     if (stmt.step()) {
       const row = stmt.getAsObject() as Record<string, unknown>;
       stmt.free();
       return {
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -124,18 +120,17 @@ class TestDbAdapter {
     return null;
   }
 
-  getVersionsInRange(fileId: string, fromVersion: number, toVersion: number): VersionRecord[] {
+  getVersionsInRange(fileId: string, fromTimestamp: number, toTimestamp: number): VersionRecord[] {
     const stmt = this.db.prepare(
-      "SELECT * FROM versions WHERE file_id = ? AND version_num >= ? AND version_num <= ? ORDER BY version_num ASC"
+      "SELECT * FROM versions WHERE file_id = ? AND created_at >= ? AND created_at <= ? ORDER BY created_at ASC"
     );
-    stmt.bind([fileId, fromVersion, toVersion]);
+    stmt.bind([fileId, fromTimestamp, toTimestamp]);
     const versions: VersionRecord[] = [];
     while (stmt.step()) {
       const row = stmt.getAsObject() as Record<string, unknown>;
       versions.push({
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -147,9 +142,21 @@ class TestDbAdapter {
 
   insertVersion(version: VersionRecord): void {
     this.db.run(
-      "INSERT INTO versions (id, file_id, version_num, is_checkpoint, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      [version.id, version.file_id, version.version_num, version.is_checkpoint ? 1 : 0, version.data, version.created_at]
+      "INSERT INTO versions (id, file_id, is_checkpoint, data, created_at) VALUES (?, ?, ?, ?, ?)",
+      [version.id, version.file_id, version.is_checkpoint ? 1 : 0, version.data, version.created_at]
     );
+  }
+
+  getVersionCount(fileId: string): number {
+    const stmt = this.db.prepare("SELECT COUNT(*) as count FROM versions WHERE file_id = ?");
+    stmt.bind([fileId]);
+    if (stmt.step()) {
+      const row = stmt.getAsObject() as Record<string, unknown>;
+      stmt.free();
+      return row.count as number;
+    }
+    stmt.free();
+    return 0;
   }
 
   async save(): Promise<void> {
@@ -191,14 +198,15 @@ class TestHistoryService {
     }
 
     const latestVersion = this.db.getLatestVersion(file.id);
-    const nextVersionNum = latestVersion ? latestVersion.version_num + 1 : 1;
-    const isCheckpoint = nextVersionNum === 1 || nextVersionNum % this.checkpointInterval === 0;
+    const versionCount = this.db.getVersionCount(file.id);
+    const nextVersionCount = versionCount + 1;
+    const isCheckpoint = nextVersionCount === 1 || nextVersionCount % this.checkpointInterval === 0;
 
     let data: string;
     if (isCheckpoint) {
       data = content;
     } else {
-      const previousContent = await this.reconstructVersion(file.id, latestVersion!.version_num);
+      const previousContent = await this.reconstructVersion(file.id, latestVersion!.created_at);
       if (previousContent === content) {
         return; // No change
       }
@@ -209,7 +217,6 @@ class TestHistoryService {
     this.db.insertVersion({
       id: this.generateId(),
       file_id: file.id,
-      version_num: nextVersionNum,
       is_checkpoint: isCheckpoint,
       data,
       created_at: now,
@@ -218,16 +225,16 @@ class TestHistoryService {
     this.db.updateFile(file.id, { updated_at: now });
   }
 
-  async reconstructVersion(fileId: string, targetVersion: number): Promise<string> {
-    const checkpoint = this.db.getNearestCheckpoint(fileId, targetVersion);
+  async reconstructVersion(fileId: string, targetTimestamp: number): Promise<string> {
+    const checkpoint = this.db.getNearestCheckpoint(fileId, targetTimestamp);
     if (!checkpoint) {
       throw new Error(`No checkpoint found for file ${fileId}`);
     }
 
     let content = checkpoint.data;
 
-    if (checkpoint.version_num < targetVersion) {
-      const versions = this.db.getVersionsInRange(fileId, checkpoint.version_num + 1, targetVersion);
+    if (checkpoint.created_at < targetTimestamp) {
+      const versions = this.db.getVersionsInRange(fileId, checkpoint.created_at + 1, targetTimestamp);
       for (const version of versions) {
         if (!version.is_checkpoint) {
           const patches = this.dmp.patch_fromText(version.data);
@@ -249,7 +256,7 @@ class TestHistoryService {
     const latestVersion = this.db.getLatestVersion(file.id);
     if (!latestVersion) return true;
 
-    const lastContent = await this.reconstructVersion(file.id, latestVersion.version_num);
+    const lastContent = await this.reconstructVersion(file.id, latestVersion.created_at);
     return content !== lastContent;
   }
 
@@ -289,7 +296,8 @@ describe("HistoryService", () => {
       expect(file).not.toBeNull();
 
       const version = db.getLatestVersion(file!.id);
-      expect(version?.version_num).toBe(1);
+      const versionCount = db.getVersionCount(file!.id);
+      expect(versionCount).toBe(1);
       expect(version?.is_checkpoint).toBe(true);
       expect(version?.data).toBe("Hello World");
     });
@@ -300,8 +308,9 @@ describe("HistoryService", () => {
 
       const file = history.getFile("test.md");
       const version = db.getLatestVersion(file!.id);
+      const versionCount = db.getVersionCount(file!.id);
 
-      expect(version?.version_num).toBe(2);
+      expect(versionCount).toBe(2);
       expect(version?.is_checkpoint).toBe(false);
       // Data should be a patch, not the full content
       expect(version?.data).not.toBe("Hello Universe");
@@ -310,20 +319,23 @@ describe("HistoryService", () => {
 
     it("creates checkpoint at interval", async () => {
       // Checkpoint interval is 5, so versions 1, 5, 10... should be checkpoints
+      const timestamps: number[] = [];
       await history.save("test.md", "v1");
+      const file = history.getFile("test.md");
+      timestamps.push(db.getLatestVersion(file!.id)!.created_at);
+
       await history.save("test.md", "v2");
       await history.save("test.md", "v3");
       await history.save("test.md", "v4");
       await history.save("test.md", "v5"); // Should be checkpoint
+      timestamps.push(db.getLatestVersion(file!.id)!.created_at);
 
-      const file = history.getFile("test.md");
-      const v1 = db.getNearestCheckpoint(file!.id, 1);
-      const v5 = db.getNearestCheckpoint(file!.id, 5);
+      const v1 = db.getNearestCheckpoint(file!.id, timestamps[0]!);
+      const v5 = db.getNearestCheckpoint(file!.id, timestamps[1]!);
 
-      expect(v1?.version_num).toBe(1);
       expect(v1?.is_checkpoint).toBe(true);
-      expect(v5?.version_num).toBe(5);
       expect(v5?.is_checkpoint).toBe(true);
+      expect(db.getVersionCount(file!.id)).toBe(5);
     });
 
     it("skips save if content unchanged", async () => {
@@ -331,9 +343,9 @@ describe("HistoryService", () => {
       await history.save("test.md", "Same content");
 
       const file = history.getFile("test.md");
-      const latest = db.getLatestVersion(file!.id);
+      const versionCount = db.getVersionCount(file!.id);
 
-      expect(latest?.version_num).toBe(1); // Only one version saved
+      expect(versionCount).toBe(1); // Only one version saved
     });
 
     it("restores file if previously deleted", async () => {
@@ -355,21 +367,26 @@ describe("HistoryService", () => {
       await history.save("test.md", "Checkpoint content");
 
       const file = history.getFile("test.md");
-      const content = await history.reconstructVersion(file!.id, 1);
+      const version = db.getLatestVersion(file!.id)!;
+      const content = await history.reconstructVersion(file!.id, version.created_at);
 
       expect(content).toBe("Checkpoint content");
     });
 
     it("reconstructs version by applying patches", async () => {
       await history.save("test.md", "Line 1");
-      await history.save("test.md", "Line 1\nLine 2");
-      await history.save("test.md", "Line 1\nLine 2\nLine 3");
-
       const file = history.getFile("test.md");
+      const t1 = db.getLatestVersion(file!.id)!.created_at;
 
-      expect(await history.reconstructVersion(file!.id, 1)).toBe("Line 1");
-      expect(await history.reconstructVersion(file!.id, 2)).toBe("Line 1\nLine 2");
-      expect(await history.reconstructVersion(file!.id, 3)).toBe("Line 1\nLine 2\nLine 3");
+      await history.save("test.md", "Line 1\nLine 2");
+      const t2 = db.getLatestVersion(file!.id)!.created_at;
+
+      await history.save("test.md", "Line 1\nLine 2\nLine 3");
+      const t3 = db.getLatestVersion(file!.id)!.created_at;
+
+      expect(await history.reconstructVersion(file!.id, t1)).toBe("Line 1");
+      expect(await history.reconstructVersion(file!.id, t2)).toBe("Line 1\nLine 2");
+      expect(await history.reconstructVersion(file!.id, t3)).toBe("Line 1\nLine 2\nLine 3");
     });
 
     it("reconstructs version across checkpoints", async () => {
@@ -379,15 +396,18 @@ describe("HistoryService", () => {
         "Version 5", "Version 6", "Version 7"
       ];
 
+      const timestamps: number[] = [];
       for (const content of contents) {
         await history.save("test.md", content);
+        const file = history.getFile("test.md");
+        timestamps.push(db.getLatestVersion(file!.id)!.created_at);
       }
 
       const file = history.getFile("test.md");
 
       // Version 7 should reconstruct from checkpoint 5 + patches 6, 7
-      expect(await history.reconstructVersion(file!.id, 7)).toBe("Version 7");
-      expect(await history.reconstructVersion(file!.id, 3)).toBe("Version 3");
+      expect(await history.reconstructVersion(file!.id, timestamps[6]!)).toBe("Version 7");
+      expect(await history.reconstructVersion(file!.id, timestamps[2]!)).toBe("Version 3");
     });
   });
 
@@ -419,10 +439,12 @@ describe("HistoryService", () => {
     it("preserves history after deletion", async () => {
       await history.save("test.md", "v1");
       await history.save("test.md", "v2");
+      const file = history.getFile("test.md");
+      const latestTimestamp = db.getLatestVersion(file!.id)!.created_at;
+
       history.markDeleted("test.md");
 
-      const file = history.getFile("test.md");
-      const content = await history.reconstructVersion(file!.id, 2);
+      const content = await history.reconstructVersion(file!.id, latestTimestamp);
 
       expect(content).toBe("v2");
     });
@@ -442,7 +464,8 @@ describe("HistoryService", () => {
       await history.save("note.md", "# My Note\n\nRevised intro.\n\n## Section 1\nSome content.\n\n## Section 2\nMore content.");
 
       const file = history.getFile("note.md");
-      const finalContent = await history.reconstructVersion(file!.id, 4);
+      const latestTimestamp = db.getLatestVersion(file!.id)!.created_at;
+      const finalContent = await history.reconstructVersion(file!.id, latestTimestamp);
 
       expect(finalContent).toBe("# My Note\n\nRevised intro.\n\n## Section 1\nSome content.\n\n## Section 2\nMore content.");
     });
@@ -452,14 +475,18 @@ describe("HistoryService", () => {
       const longContent = "A".repeat(10000);
 
       await history.save("test.md", shortContent);
-      await history.save("test.md", longContent);
-      await history.save("test.md", shortContent);
-
       const file = history.getFile("test.md");
+      const t1 = db.getLatestVersion(file!.id)!.created_at;
 
-      expect(await history.reconstructVersion(file!.id, 1)).toBe(shortContent);
-      expect(await history.reconstructVersion(file!.id, 2)).toBe(longContent);
-      expect(await history.reconstructVersion(file!.id, 3)).toBe(shortContent);
+      await history.save("test.md", longContent);
+      const t2 = db.getLatestVersion(file!.id)!.created_at;
+
+      await history.save("test.md", shortContent);
+      const t3 = db.getLatestVersion(file!.id)!.created_at;
+
+      expect(await history.reconstructVersion(file!.id, t1)).toBe(shortContent);
+      expect(await history.reconstructVersion(file!.id, t2)).toBe(longContent);
+      expect(await history.reconstructVersion(file!.id, t3)).toBe(shortContent);
     });
   });
 });

@@ -56,11 +56,12 @@ export default class HistoryService {
 
     // Get latest version
     const latestVersion = this.db.getLatestVersion(file.id);
-    const nextVersionNum = latestVersion ? latestVersion.version_num + 1 : 1;
+    const versionCount = this.db.getVersionCount(file.id);
+    const nextVersionCount = versionCount + 1;
 
     // Determine if this should be a checkpoint
-    const isCheckpoint = nextVersionNum === 1 || nextVersionNum % this.checkpointInterval === 0;
-    logger.debug(`Version ${nextVersionNum} - Checkpoint: ${isCheckpoint}`,
+    const isCheckpoint = nextVersionCount === 1 || nextVersionCount % this.checkpointInterval === 0;
+    logger.debug(`Version count ${nextVersionCount} - Checkpoint: ${isCheckpoint}`,
       field("context", "History"),
       field("checkpointInterval", this.checkpointInterval)
     );
@@ -72,7 +73,7 @@ export default class HistoryService {
       data = content;
     } else {
       // Compute and store diff from previous version
-      const previousContent = await this.reconstructVersion(file.id, latestVersion!.version_num);
+      const previousContent = await this.reconstructVersion(file.id, latestVersion!.created_at);
       if (previousContent === content) {
         // No actual change, skip
         logger.debug("No content change detected, skipping version save", field("context", "History"));
@@ -88,7 +89,6 @@ export default class HistoryService {
     const version: VersionRecord = {
       id: uuidv7(),
       file_id: file.id,
-      version_num: nextVersionNum,
       is_checkpoint: isCheckpoint,
       data: data,
       created_at: now,
@@ -100,28 +100,28 @@ export default class HistoryService {
 
     // Persist to disk
     await this.db.save();
-    logger.info(`Version ${nextVersionNum} saved for ${filePath}`, field("context", "History"));
+    logger.info(`Version saved for ${filePath}`, field("context", "History"), field("is_checkpoint", isCheckpoint));
   }
 
   /**
-   * Reconstruct the content of a file at a specific version.
+   * Reconstruct the content of a file at a specific timestamp.
    */
-  async reconstructVersion(fileId: string, targetVersion: number): Promise<string> {
-    logger.debug(`Reconstructing version ${targetVersion} for file ${fileId}`, field("context", "History"));
-    // Find the nearest checkpoint at or before target version
-    const checkpoint = this.db.getNearestCheckpoint(fileId, targetVersion);
+  async reconstructVersion(fileId: string, targetTimestamp: number): Promise<string> {
+    logger.debug(`Reconstructing version at ${targetTimestamp} for file ${fileId}`, field("context", "History"));
+    // Find the nearest checkpoint at or before target timestamp
+    const checkpoint = this.db.getNearestCheckpoint(fileId, targetTimestamp);
     if (!checkpoint) {
-      logger.error(`No checkpoint found for file ${fileId} at or before version ${targetVersion}`, field("context", "History"));
-      throw new Error(`No checkpoint found for file ${fileId} at or before version ${targetVersion}`);
+      logger.error(`No checkpoint found for file ${fileId} at or before timestamp ${targetTimestamp}`, field("context", "History"));
+      throw new Error(`No checkpoint found for file ${fileId} at or before timestamp ${targetTimestamp}`);
     }
 
-    logger.debug(`Starting from checkpoint version ${checkpoint.version_num}`, field("context", "History"));
+    logger.debug(`Starting from checkpoint at ${checkpoint.created_at}`, field("context", "History"));
     // Start with checkpoint content
     let content = checkpoint.data;
 
     // Apply patches from checkpoint+1 to target
-    if (checkpoint.version_num < targetVersion) {
-      const versions = this.db.getVersionsInRange(fileId, checkpoint.version_num + 1, targetVersion);
+    if (checkpoint.created_at < targetTimestamp) {
+      const versions = this.db.getVersionsInRange(fileId, checkpoint.created_at + 1, targetTimestamp);
       logger.debug(`Applying ${versions.length} patches`, field("context", "History"));
       for (const version of versions) {
         if (!version.is_checkpoint) {
@@ -129,18 +129,18 @@ export default class HistoryService {
           const [patchedContent, results] = this.dmp.patch_apply(patches, content);
           // Check if all patches applied successfully
           if (results.some((r) => !r)) {
-            logger.warn(`Some patches failed to apply for version ${version.version_num}`, field("context", "History"));
+            logger.warn(`Some patches failed to apply at timestamp ${version.created_at}`, field("context", "History"));
           }
           content = patchedContent;
         } else {
           // This shouldn't happen in normal flow, but handle it
-          logger.debug(`Using checkpoint at version ${version.version_num}`, field("context", "History"));
+          logger.debug(`Using checkpoint at timestamp ${version.created_at}`, field("context", "History"));
           content = version.data;
         }
       }
     }
 
-    logger.debug(`Version ${targetVersion} reconstructed successfully`, field("context", "History"));
+    logger.debug(`Version at ${targetTimestamp} reconstructed successfully`, field("context", "History"));
     return content;
   }
 
@@ -164,7 +164,7 @@ export default class HistoryService {
     }
 
     const currentContent = await this.vault.read(tfile);
-    const lastContent = await this.reconstructVersion(file.id, latestVersion.version_num);
+    const lastContent = await this.reconstructVersion(file.id, latestVersion.created_at);
 
     if (currentContent === lastContent) {
       return "No changes";
@@ -187,17 +187,17 @@ export default class HistoryService {
   }
 
   /**
-   * Restore a file to a specific version.
+   * Restore a file to a specific timestamp.
    */
-  async restore(filePath: string, targetVersion: number): Promise<void> {
-    logger.info(`Restoring ${filePath} to version ${targetVersion}`, field("context", "History"));
+  async restore(filePath: string, targetTimestamp: number): Promise<void> {
+    logger.info(`Restoring ${filePath} to timestamp ${targetTimestamp}`, field("context", "History"));
     const file = this.db.getFileByPath(filePath);
     if (!file) {
       logger.error(`File ${filePath} not found in history`, field("context", "History"));
       throw new Error(`File ${filePath} not found in history`);
     }
 
-    const content = await this.reconstructVersion(file.id, targetVersion);
+    const content = await this.reconstructVersion(file.id, targetTimestamp);
 
     // Get or create the file in vault
     const tfile = this.vault.getAbstractFileByPath(filePath);
@@ -238,7 +238,7 @@ export default class HistoryService {
     if (!latestVersion) {
       return [];
     }
-    return this.db.getVersionsInRange(file.id, 1, latestVersion.version_num);
+    return this.db.getVersionsInRange(file.id, 0, latestVersion.created_at);
   }
 
   /**
@@ -269,7 +269,7 @@ export default class HistoryService {
       return true; // No versions yet
     }
 
-    const lastContent = await this.reconstructVersion(file.id, latestVersion.version_num);
+    const lastContent = await this.reconstructVersion(file.id, latestVersion.created_at);
     return content !== lastContent;
   }
 }

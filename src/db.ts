@@ -19,14 +19,12 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS versions (
   id TEXT PRIMARY KEY,
   file_id TEXT NOT NULL REFERENCES files(id),
-  version_num INTEGER NOT NULL,
   is_checkpoint INTEGER NOT NULL,
   data TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  UNIQUE(file_id, version_num)
+  created_at INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_versions_file ON versions(file_id, version_num DESC);
+CREATE INDEX IF NOT EXISTS idx_versions_file ON versions(file_id, created_at DESC);
 `;
 
 export interface FileRecord {
@@ -40,7 +38,6 @@ export interface FileRecord {
 export interface VersionRecord {
   id: string;
   file_id: string;
-  version_num: number;
   is_checkpoint: boolean;
   data: string;
   created_at: number;
@@ -198,7 +195,7 @@ export class DbService {
   getLatestVersion(fileId: string): VersionRecord | null {
     if (!this.db) return null;
     const stmt = this.db.prepare(
-      "SELECT * FROM versions WHERE file_id = ? ORDER BY version_num DESC LIMIT 1"
+      "SELECT * FROM versions WHERE file_id = ? ORDER BY created_at DESC LIMIT 1"
     );
     stmt.bind([fileId]);
     if (stmt.step()) {
@@ -207,7 +204,6 @@ export class DbService {
       return {
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -217,19 +213,18 @@ export class DbService {
     return null;
   }
 
-  getVersion(fileId: string, versionNum: number): VersionRecord | null {
+  getVersion(fileId: string, timestamp: number): VersionRecord | null {
     if (!this.db) return null;
     const stmt = this.db.prepare(
-      "SELECT * FROM versions WHERE file_id = ? AND version_num = ?"
+      "SELECT * FROM versions WHERE file_id = ? AND created_at = ?"
     );
-    stmt.bind([fileId, versionNum]);
+    stmt.bind([fileId, timestamp]);
     if (stmt.step()) {
       const row = stmt.getAsObject() as Record<string, unknown>;
       stmt.free();
       return {
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -239,19 +234,18 @@ export class DbService {
     return null;
   }
 
-  getVersionsInRange(fileId: string, fromVersion: number, toVersion: number): VersionRecord[] {
+  getVersionsInRange(fileId: string, fromTimestamp: number, toTimestamp: number): VersionRecord[] {
     if (!this.db) return [];
     const stmt = this.db.prepare(
-      "SELECT * FROM versions WHERE file_id = ? AND version_num >= ? AND version_num <= ? ORDER BY version_num ASC"
+      "SELECT * FROM versions WHERE file_id = ? AND created_at >= ? AND created_at <= ? ORDER BY created_at ASC"
     );
-    stmt.bind([fileId, fromVersion, toVersion]);
+    stmt.bind([fileId, fromTimestamp, toTimestamp]);
     const versions: VersionRecord[] = [];
     while (stmt.step()) {
       const row = stmt.getAsObject() as Record<string, unknown>;
       versions.push({
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -261,19 +255,18 @@ export class DbService {
     return versions;
   }
 
-  getNearestCheckpoint(fileId: string, beforeVersion: number): VersionRecord | null {
+  getNearestCheckpoint(fileId: string, beforeTimestamp: number): VersionRecord | null {
     if (!this.db) return null;
     const stmt = this.db.prepare(
-      "SELECT * FROM versions WHERE file_id = ? AND version_num <= ? AND is_checkpoint = 1 ORDER BY version_num DESC LIMIT 1"
+      "SELECT * FROM versions WHERE file_id = ? AND created_at <= ? AND is_checkpoint = 1 ORDER BY created_at DESC LIMIT 1"
     );
-    stmt.bind([fileId, beforeVersion]);
+    stmt.bind([fileId, beforeTimestamp]);
     if (stmt.step()) {
       const row = stmt.getAsObject() as Record<string, unknown>;
       stmt.free();
       return {
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -285,17 +278,17 @@ export class DbService {
 
   insertVersion(version: VersionRecord): void {
     if (!this.db) return;
-    logger.debug(`Inserting version: v${version.version_num} for file ${version.file_id}`,
+    logger.debug(`Inserting version for file ${version.file_id}`,
       field("context", "DB"),
       field("is_checkpoint", version.is_checkpoint),
-      field("data_size", version.data.length)
+      field("data_size", version.data.length),
+      field("created_at", version.created_at)
     );
     this.db.run(
-      "INSERT INTO versions (id, file_id, version_num, is_checkpoint, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO versions (id, file_id, is_checkpoint, data, created_at) VALUES (?, ?, ?, ?, ?)",
       [
         version.id,
         version.file_id,
-        version.version_num,
         version.is_checkpoint ? 1 : 0,
         version.data,
         version.created_at,

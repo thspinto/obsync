@@ -14,14 +14,12 @@ CREATE TABLE IF NOT EXISTS files (
 CREATE TABLE IF NOT EXISTS versions (
   id TEXT PRIMARY KEY,
   file_id TEXT NOT NULL REFERENCES files(id),
-  version_num INTEGER NOT NULL,
   is_checkpoint INTEGER NOT NULL,
   data TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  UNIQUE(file_id, version_num)
+  created_at INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_versions_file ON versions(file_id, version_num DESC);
+CREATE INDEX IF NOT EXISTS idx_versions_file ON versions(file_id, created_at DESC);
 `;
 
 /**
@@ -116,7 +114,7 @@ class TestDb {
 
   getLatestVersion(fileId: string): VersionRecord | null {
     const stmt = this.db.prepare(
-      "SELECT * FROM versions WHERE file_id = ? ORDER BY version_num DESC LIMIT 1"
+      "SELECT * FROM versions WHERE file_id = ? ORDER BY created_at DESC LIMIT 1"
     );
     stmt.bind([fileId]);
     if (stmt.step()) {
@@ -125,7 +123,6 @@ class TestDb {
       return {
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -135,18 +132,17 @@ class TestDb {
     return null;
   }
 
-  getVersion(fileId: string, versionNum: number): VersionRecord | null {
+  getVersion(fileId: string, timestamp: number): VersionRecord | null {
     const stmt = this.db.prepare(
-      "SELECT * FROM versions WHERE file_id = ? AND version_num = ?"
+      "SELECT * FROM versions WHERE file_id = ? AND created_at = ?"
     );
-    stmt.bind([fileId, versionNum]);
+    stmt.bind([fileId, timestamp]);
     if (stmt.step()) {
       const row = stmt.getAsObject() as Record<string, unknown>;
       stmt.free();
       return {
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -156,18 +152,17 @@ class TestDb {
     return null;
   }
 
-  getVersionsInRange(fileId: string, fromVersion: number, toVersion: number): VersionRecord[] {
+  getVersionsInRange(fileId: string, fromTimestamp: number, toTimestamp: number): VersionRecord[] {
     const stmt = this.db.prepare(
-      "SELECT * FROM versions WHERE file_id = ? AND version_num >= ? AND version_num <= ? ORDER BY version_num ASC"
+      "SELECT * FROM versions WHERE file_id = ? AND created_at >= ? AND created_at <= ? ORDER BY created_at ASC"
     );
-    stmt.bind([fileId, fromVersion, toVersion]);
+    stmt.bind([fileId, fromTimestamp, toTimestamp]);
     const versions: VersionRecord[] = [];
     while (stmt.step()) {
       const row = stmt.getAsObject() as Record<string, unknown>;
       versions.push({
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -177,18 +172,17 @@ class TestDb {
     return versions;
   }
 
-  getNearestCheckpoint(fileId: string, beforeVersion: number): VersionRecord | null {
+  getNearestCheckpoint(fileId: string, beforeTimestamp: number): VersionRecord | null {
     const stmt = this.db.prepare(
-      "SELECT * FROM versions WHERE file_id = ? AND version_num <= ? AND is_checkpoint = 1 ORDER BY version_num DESC LIMIT 1"
+      "SELECT * FROM versions WHERE file_id = ? AND created_at <= ? AND is_checkpoint = 1 ORDER BY created_at DESC LIMIT 1"
     );
-    stmt.bind([fileId, beforeVersion]);
+    stmt.bind([fileId, beforeTimestamp]);
     if (stmt.step()) {
       const row = stmt.getAsObject() as Record<string, unknown>;
       stmt.free();
       return {
         id: row.id as string,
         file_id: row.file_id as string,
-        version_num: row.version_num as number,
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
@@ -200,11 +194,10 @@ class TestDb {
 
   insertVersion(version: VersionRecord): void {
     this.db.run(
-      "INSERT INTO versions (id, file_id, version_num, is_checkpoint, data, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO versions (id, file_id, is_checkpoint, data, created_at) VALUES (?, ?, ?, ?, ?)",
       [
         version.id,
         version.file_id,
-        version.version_num,
         version.is_checkpoint ? 1 : 0,
         version.data,
         version.created_at,
@@ -310,26 +303,25 @@ describe("DbService", () => {
       const version: VersionRecord = {
         id: "v1",
         file_id: "file-1",
-        version_num: 1,
         is_checkpoint: true,
         data: "Hello World",
         created_at: 1000,
       };
 
       db.insertVersion(version);
-      const retrieved = db.getVersion("file-1", 1);
+      const retrieved = db.getVersion("file-1", 1000);
 
       expect(retrieved).toEqual(version);
     });
 
     it("gets latest version", () => {
-      db.insertVersion({ id: "v1", file_id: "file-1", version_num: 1, is_checkpoint: true, data: "v1", created_at: 1000 });
-      db.insertVersion({ id: "v2", file_id: "file-1", version_num: 2, is_checkpoint: false, data: "v2", created_at: 2000 });
-      db.insertVersion({ id: "v3", file_id: "file-1", version_num: 3, is_checkpoint: false, data: "v3", created_at: 3000 });
+      db.insertVersion({ id: "v1", file_id: "file-1", is_checkpoint: true, data: "v1", created_at: 1000 });
+      db.insertVersion({ id: "v2", file_id: "file-1", is_checkpoint: false, data: "v2", created_at: 2000 });
+      db.insertVersion({ id: "v3", file_id: "file-1", is_checkpoint: false, data: "v3", created_at: 3000 });
 
       const latest = db.getLatestVersion("file-1");
 
-      expect(latest?.version_num).toBe(3);
+      expect(latest?.created_at).toBe(3000);
       expect(latest?.data).toBe("v3");
     });
 
@@ -338,51 +330,50 @@ describe("DbService", () => {
         db.insertVersion({
           id: `v${i}`,
           file_id: "file-1",
-          version_num: i,
           is_checkpoint: i % 5 === 1,
           data: `content-${i}`,
           created_at: i * 1000,
         });
       }
 
-      const versions = db.getVersionsInRange("file-1", 3, 7);
+      const versions = db.getVersionsInRange("file-1", 3000, 7000);
 
       expect(versions).toHaveLength(5);
-      expect(versions[0]?.version_num).toBe(3);
-      expect(versions[4]?.version_num).toBe(7);
+      expect(versions[0]?.created_at).toBe(3000);
+      expect(versions[4]?.created_at).toBe(7000);
     });
 
     it("gets nearest checkpoint before version", () => {
-      db.insertVersion({ id: "v1", file_id: "file-1", version_num: 1, is_checkpoint: true, data: "cp1", created_at: 1000 });
-      db.insertVersion({ id: "v2", file_id: "file-1", version_num: 2, is_checkpoint: false, data: "d2", created_at: 2000 });
-      db.insertVersion({ id: "v3", file_id: "file-1", version_num: 3, is_checkpoint: false, data: "d3", created_at: 3000 });
-      db.insertVersion({ id: "v4", file_id: "file-1", version_num: 4, is_checkpoint: false, data: "d4", created_at: 4000 });
-      db.insertVersion({ id: "v5", file_id: "file-1", version_num: 5, is_checkpoint: true, data: "cp5", created_at: 5000 });
-      db.insertVersion({ id: "v6", file_id: "file-1", version_num: 6, is_checkpoint: false, data: "d6", created_at: 6000 });
+      db.insertVersion({ id: "v1", file_id: "file-1", is_checkpoint: true, data: "cp1", created_at: 1000 });
+      db.insertVersion({ id: "v2", file_id: "file-1", is_checkpoint: false, data: "d2", created_at: 2000 });
+      db.insertVersion({ id: "v3", file_id: "file-1", is_checkpoint: false, data: "d3", created_at: 3000 });
+      db.insertVersion({ id: "v4", file_id: "file-1", is_checkpoint: false, data: "d4", created_at: 4000 });
+      db.insertVersion({ id: "v5", file_id: "file-1", is_checkpoint: true, data: "cp5", created_at: 5000 });
+      db.insertVersion({ id: "v6", file_id: "file-1", is_checkpoint: false, data: "d6", created_at: 6000 });
 
-      // Nearest checkpoint to v4 should be v1
-      expect(db.getNearestCheckpoint("file-1", 4)?.version_num).toBe(1);
+      // Nearest checkpoint to timestamp 4000 should be 1000
+      expect(db.getNearestCheckpoint("file-1", 4000)?.created_at).toBe(1000);
 
-      // Nearest checkpoint to v6 should be v5
-      expect(db.getNearestCheckpoint("file-1", 6)?.version_num).toBe(5);
+      // Nearest checkpoint to timestamp 6000 should be 5000
+      expect(db.getNearestCheckpoint("file-1", 6000)?.created_at).toBe(5000);
 
-      // Nearest checkpoint to v5 should be v5 itself
-      expect(db.getNearestCheckpoint("file-1", 5)?.version_num).toBe(5);
+      // Nearest checkpoint to timestamp 5000 should be 5000 itself
+      expect(db.getNearestCheckpoint("file-1", 5000)?.created_at).toBe(5000);
     });
 
     it("counts versions for a file", () => {
       expect(db.getVersionCount("file-1")).toBe(0);
 
-      db.insertVersion({ id: "v1", file_id: "file-1", version_num: 1, is_checkpoint: true, data: "v1", created_at: 1000 });
-      db.insertVersion({ id: "v2", file_id: "file-1", version_num: 2, is_checkpoint: false, data: "v2", created_at: 2000 });
+      db.insertVersion({ id: "v1", file_id: "file-1", is_checkpoint: true, data: "v1", created_at: 1000 });
+      db.insertVersion({ id: "v2", file_id: "file-1", is_checkpoint: false, data: "v2", created_at: 2000 });
 
       expect(db.getVersionCount("file-1")).toBe(2);
     });
 
     it("returns null for non-existent version", () => {
-      expect(db.getVersion("file-1", 999)).toBeNull();
+      expect(db.getVersion("file-1", 99999)).toBeNull();
       expect(db.getLatestVersion("nonexistent-file")).toBeNull();
-      expect(db.getNearestCheckpoint("file-1", 1)).toBeNull();
+      expect(db.getNearestCheckpoint("file-1", 1000)).toBeNull();
     });
   });
 });

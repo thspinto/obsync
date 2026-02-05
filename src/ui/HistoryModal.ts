@@ -84,7 +84,7 @@ export default class HistoryModal extends Modal {
       return;
     }
 
-    this.versions = versions.sort((a, b) => b.version_num - a.version_num);
+    this.versions = versions.sort((a, b) => b.created_at - a.created_at);
     this.selectedVersion = this.versions[0] ?? null;
     this.renderVersionList();
     this.diffToggle.disabled = false;
@@ -130,7 +130,7 @@ export default class HistoryModal extends Modal {
 
     const content = await this.history.reconstructVersion(
       this.fileRecord.id,
-      this.selectedVersion.version_num
+      this.selectedVersion.created_at
     );
 
     if (requestId !== this.previewRequestId) {
@@ -170,12 +170,19 @@ export default class HistoryModal extends Modal {
     if (!this.selectedVersion || !this.fileRecord) {
       return "";
     }
-    if (this.selectedVersion.version_num <= 1) {
+    // Find the previous version by timestamp
+    const currentIndex = this.versions.findIndex(v => v.id === this.selectedVersion!.id);
+    if (currentIndex >= this.versions.length - 1) {
+      // This is the oldest version
+      return "";
+    }
+    const previousVersion = this.versions[currentIndex + 1];
+    if (!previousVersion) {
       return "";
     }
     return this.history.reconstructVersion(
       this.fileRecord.id,
-      this.selectedVersion.version_num - 1
+      previousVersion.created_at
     );
   }
 
@@ -192,7 +199,7 @@ export default class HistoryModal extends Modal {
       return;
     }
 
-    await this.history.restore(this.file.path, this.selectedVersion.version_num);
+    await this.history.restore(this.file.path, this.selectedVersion.created_at);
     new Notice(`Restored ${this.file.name} to ${label}`);
     this.close();
   }

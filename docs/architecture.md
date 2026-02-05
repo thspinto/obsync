@@ -168,7 +168,6 @@ erDiagram
     VERSIONS {
         text id PK "UUIDv7"
         text file_id FK
-        integer version_num "sequential per file"
         integer is_checkpoint "1=full, 0=diff"
         text data "content or patch"
         integer created_at
