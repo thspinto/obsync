@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS versions (
   file_id TEXT NOT NULL REFERENCES files(id),
   is_checkpoint INTEGER NOT NULL,
   data TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  synced INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_versions_file ON versions(file_id, created_at DESC);
@@ -126,6 +127,7 @@ class TestDb {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       };
     }
     stmt.free();
@@ -146,6 +148,7 @@ class TestDb {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       };
     }
     stmt.free();
@@ -166,6 +169,7 @@ class TestDb {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       });
     }
     stmt.free();
@@ -186,6 +190,7 @@ class TestDb {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       };
     }
     stmt.free();
@@ -194,13 +199,14 @@ class TestDb {
 
   insertVersion(version: VersionRecord): void {
     this.db.run(
-      "INSERT INTO versions (id, file_id, is_checkpoint, data, created_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO versions (id, file_id, is_checkpoint, data, created_at, synced) VALUES (?, ?, ?, ?, ?, ?)",
       [
         version.id,
         version.file_id,
         version.is_checkpoint ? 1 : 0,
         version.data,
         version.created_at,
+        version.synced ? 1 : 0,
       ]
     );
   }
@@ -306,6 +312,7 @@ describe("DbService", () => {
         is_checkpoint: true,
         data: "Hello World",
         created_at: 1000,
+        synced: false,
       };
 
       db.insertVersion(version);
@@ -315,9 +322,9 @@ describe("DbService", () => {
     });
 
     it("gets latest version", () => {
-      db.insertVersion({ id: "v1", file_id: "file-1", is_checkpoint: true, data: "v1", created_at: 1000 });
-      db.insertVersion({ id: "v2", file_id: "file-1", is_checkpoint: false, data: "v2", created_at: 2000 });
-      db.insertVersion({ id: "v3", file_id: "file-1", is_checkpoint: false, data: "v3", created_at: 3000 });
+      db.insertVersion({ id: "v1", file_id: "file-1", is_checkpoint: true, data: "v1", created_at: 1000, synced: false });
+      db.insertVersion({ id: "v2", file_id: "file-1", is_checkpoint: false, data: "v2", created_at: 2000, synced: false });
+      db.insertVersion({ id: "v3", file_id: "file-1", is_checkpoint: false, data: "v3", created_at: 3000, synced: false });
 
       const latest = db.getLatestVersion("file-1");
 
@@ -333,6 +340,7 @@ describe("DbService", () => {
           is_checkpoint: i % 5 === 1,
           data: `content-${i}`,
           created_at: i * 1000,
+          synced: false,
         });
       }
 
@@ -344,12 +352,12 @@ describe("DbService", () => {
     });
 
     it("gets nearest checkpoint before version", () => {
-      db.insertVersion({ id: "v1", file_id: "file-1", is_checkpoint: true, data: "cp1", created_at: 1000 });
-      db.insertVersion({ id: "v2", file_id: "file-1", is_checkpoint: false, data: "d2", created_at: 2000 });
-      db.insertVersion({ id: "v3", file_id: "file-1", is_checkpoint: false, data: "d3", created_at: 3000 });
-      db.insertVersion({ id: "v4", file_id: "file-1", is_checkpoint: false, data: "d4", created_at: 4000 });
-      db.insertVersion({ id: "v5", file_id: "file-1", is_checkpoint: true, data: "cp5", created_at: 5000 });
-      db.insertVersion({ id: "v6", file_id: "file-1", is_checkpoint: false, data: "d6", created_at: 6000 });
+      db.insertVersion({ id: "v1", file_id: "file-1", is_checkpoint: true, data: "cp1", created_at: 1000, synced: false });
+      db.insertVersion({ id: "v2", file_id: "file-1", is_checkpoint: false, data: "d2", created_at: 2000, synced: false });
+      db.insertVersion({ id: "v3", file_id: "file-1", is_checkpoint: false, data: "d3", created_at: 3000, synced: false });
+      db.insertVersion({ id: "v4", file_id: "file-1", is_checkpoint: false, data: "d4", created_at: 4000, synced: false });
+      db.insertVersion({ id: "v5", file_id: "file-1", is_checkpoint: true, data: "cp5", created_at: 5000, synced: false });
+      db.insertVersion({ id: "v6", file_id: "file-1", is_checkpoint: false, data: "d6", created_at: 6000, synced: false });
 
       // Nearest checkpoint to timestamp 4000 should be 1000
       expect(db.getNearestCheckpoint("file-1", 4000)?.created_at).toBe(1000);
@@ -364,8 +372,8 @@ describe("DbService", () => {
     it("counts versions for a file", () => {
       expect(db.getVersionCount("file-1")).toBe(0);
 
-      db.insertVersion({ id: "v1", file_id: "file-1", is_checkpoint: true, data: "v1", created_at: 1000 });
-      db.insertVersion({ id: "v2", file_id: "file-1", is_checkpoint: false, data: "v2", created_at: 2000 });
+      db.insertVersion({ id: "v1", file_id: "file-1", is_checkpoint: true, data: "v1", created_at: 1000, synced: false });
+      db.insertVersion({ id: "v2", file_id: "file-1", is_checkpoint: false, data: "v2", created_at: 2000, synced: false });
 
       expect(db.getVersionCount("file-1")).toBe(2);
     });

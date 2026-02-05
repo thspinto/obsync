@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS versions (
   file_id TEXT NOT NULL REFERENCES files(id),
   is_checkpoint INTEGER NOT NULL,
   data TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  synced INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_versions_file ON versions(file_id, created_at DESC);
@@ -41,6 +42,7 @@ export interface VersionRecord {
   is_checkpoint: boolean;
   data: string;
   created_at: number;
+  synced: boolean;
 }
 
 export class DbService {
@@ -86,7 +88,7 @@ export class DbService {
     if (!this.db) return;
     logger.debug("Saving database to disk", field("context", "DB"));
     const data = this.db.export();
-    await this.plugin.app.vault.adapter.writeBinary(this.dbPath, data);
+    await this.plugin.app.vault.adapter.writeBinary(this.dbPath, data.buffer as ArrayBuffer);
     logger.debug(`Database saved (${data.length} bytes)`, field("context", "DB"));
   }
 
@@ -207,6 +209,7 @@ export class DbService {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       };
     }
     stmt.free();
@@ -228,6 +231,7 @@ export class DbService {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       };
     }
     stmt.free();
@@ -249,6 +253,7 @@ export class DbService {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       });
     }
     stmt.free();
@@ -270,6 +275,7 @@ export class DbService {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       };
     }
     stmt.free();
@@ -324,6 +330,7 @@ export class DbService {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       };
     }
     stmt.free();
@@ -348,5 +355,42 @@ export class DbService {
       field("exceptVersionId", exceptVersionId)
     );
     this.db.run(sql, params);
+  }
+
+  // Sync operations
+  getUnsyncedVersions(): Array<VersionRecord & { file_path: string }> {
+    if (!this.db) return [];
+    const stmt = this.db.prepare(
+      `SELECT v.*, f.path as file_path
+       FROM versions v
+       JOIN files f ON v.file_id = f.id
+       WHERE v.synced = 0
+       ORDER BY v.created_at ASC`
+    );
+    const versions: Array<VersionRecord & { file_path: string }> = [];
+    while (stmt.step()) {
+      const row = stmt.getAsObject() as Record<string, unknown>;
+      versions.push({
+        id: row.id as string,
+        file_id: row.file_id as string,
+        is_checkpoint: Boolean(row.is_checkpoint),
+        data: row.data as string,
+        created_at: row.created_at as number,
+        synced: Boolean(row.synced),
+        file_path: row.file_path as string,
+      });
+    }
+    stmt.free();
+    return versions;
+  }
+
+  markVersionsSynced(versionIds: string[]): void {
+    if (!this.db || versionIds.length === 0) return;
+    logger.debug(`Marking ${versionIds.length} versions as synced`, field("context", "DB"));
+    const placeholders = versionIds.map(() => "?").join(", ");
+    this.db.run(
+      `UPDATE versions SET synced = 1 WHERE id IN (${placeholders})`,
+      versionIds
+    );
   }
 }

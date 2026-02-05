@@ -2,6 +2,7 @@ import { Notice, Plugin, TFile, TFolder } from "obsidian";
 import { DEFAULT_SETTINGS, ObsyncSettings, ObsyncSettingTab } from "./settings";
 import { DbService } from "./db";
 import HistoryService from "./history";
+import { SyncService } from "./sync";
 import { logger } from "./utils/logger";
 import { Level, field } from "@coder/logger";
 import HistoryModal from "./ui/HistoryModal";
@@ -10,6 +11,7 @@ export default class Obsync extends Plugin {
   settings: ObsyncSettings;
   private db: DbService;
   private history: HistoryService;
+  private syncService: SyncService;
   private snapshotDaemonInterval: number | null = null;
 
   async onload() {
@@ -27,6 +29,10 @@ export default class Obsync extends Plugin {
     // Initialize history service
     logger.debug("Initializing history service", field("context", "Plugin"));
     this.history = new HistoryService(this.db, this.app.vault);
+
+    // Initialize sync service
+    logger.debug("Initializing sync service", field("context", "Plugin"));
+    this.syncService = new SyncService(this.db, this.settings, () => this.saveSettings());
 
     // Run startup scan
     logger.debug("Starting initial vault scan", field("context", "Plugin"));
@@ -121,6 +127,9 @@ export default class Obsync extends Plugin {
   async onunload() {
     logger.info("Obsync plugin unloading...", field("context", "Plugin"));
     this.stopSnapshotDaemon();
+    if (this.syncService) {
+      this.syncService.stop();
+    }
     if (this.db) {
       logger.debug("Closing database", field("context", "Plugin"));
       await this.db.close();
@@ -152,11 +161,13 @@ export default class Obsync extends Plugin {
     logger.debug("Starting snapshot daemon", field("context", "Plugin"), field("intervalMinutes", this.settings.snapshotIntervalMinutes));
     // Run immediately on startup
     this.history.runSnapshotDaemon();
+    this.syncService.runSyncDaemon();
 
-    // Then run on interval
+    // Then run on interval (both snapshot and sync use the same interval)
     const intervalMs = this.settings.snapshotIntervalMinutes * 60 * 1000;
     this.snapshotDaemonInterval = window.setInterval(() => {
       this.history.runSnapshotDaemon();
+      this.syncService.runSyncDaemon();
     }, intervalMs);
   }
 
@@ -250,5 +261,21 @@ export default class Obsync extends Plugin {
 
   private openHistoryModal(file: TFile): void {
     new HistoryModal(this.app, this.history, file).open();
+  }
+
+  /**
+   * Initiate OAuth login flow
+   * Called from settings tab
+   */
+  async initiateLogin(): Promise<void> {
+    try {
+      const { userCode, verificationUri } = await this.syncService.initiateLogin();
+      new Notice(`Obsync: Enter code ${userCode} at ${verificationUri}`, 30000);
+      // Open the verification URL in browser
+      window.open(verificationUri);
+    } catch (error) {
+      logger.error("Login initiation failed", field("context", "Plugin"), field("error", error));
+      new Notice(`Obsync: Login failed - ${error}`);
+    }
   }
 }

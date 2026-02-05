@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS versions (
   file_id TEXT NOT NULL REFERENCES files(id),
   is_checkpoint INTEGER NOT NULL,
   data TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  synced INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_versions_file ON versions(file_id, created_at DESC);
@@ -94,6 +95,7 @@ class TestDbAdapter {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       };
     }
     stmt.free();
@@ -114,6 +116,7 @@ class TestDbAdapter {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       };
     }
     stmt.free();
@@ -134,6 +137,7 @@ class TestDbAdapter {
         is_checkpoint: Boolean(row.is_checkpoint),
         data: row.data as string,
         created_at: row.created_at as number,
+        synced: Boolean(row.synced),
       });
     }
     stmt.free();
@@ -142,8 +146,8 @@ class TestDbAdapter {
 
   insertVersion(version: VersionRecord): void {
     this.db.run(
-      "INSERT INTO versions (id, file_id, is_checkpoint, data, created_at) VALUES (?, ?, ?, ?, ?)",
-      [version.id, version.file_id, version.is_checkpoint ? 1 : 0, version.data, version.created_at]
+      "INSERT INTO versions (id, file_id, is_checkpoint, data, created_at, synced) VALUES (?, ?, ?, ?, ?, ?)",
+      [version.id, version.file_id, version.is_checkpoint ? 1 : 0, version.data, version.created_at, version.synced ? 1 : 0]
     );
   }
 
@@ -220,6 +224,7 @@ class TestHistoryService {
       is_checkpoint: isCheckpoint,
       data,
       created_at: now,
+      synced: false,
     });
 
     this.db.updateFile(file.id, { updated_at: now });

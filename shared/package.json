@@ -1,0 +1,8 @@
+{
+  "name": "@obsync/shared",
+  "version": "1.0.0",
+  "description": "Shared types for Obsync client and server",
+  "main": "types.ts",
+  "types": "types.ts",
+  "private": true
+}

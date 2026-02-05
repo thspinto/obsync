@@ -77,6 +77,7 @@ export default class HistoryService {
       is_checkpoint: isFirstVersion,
       data: data,
       created_at: now,
+      synced: false,
     };
     this.db.insertVersion(version);
 
@@ -290,6 +291,7 @@ export default class HistoryService {
       is_checkpoint: true,
       data: content,
       created_at: now,
+      synced: false,
     };
     this.db.insertVersion(version);
 
