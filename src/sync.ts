@@ -36,11 +36,22 @@ interface SyncVersionsResponse {
   errors: Array<{ version_id: string; error: string }>;
 }
 
+interface VaultResponse {
+  id: string;
+  name: string;
+  created_at: number;
+}
+
+interface ListVaultsResponse {
+  vaults: VaultResponse[];
+}
+
 export class SyncService {
   private db: DbService;
   private settings: ObsyncSettings;
   private saveSettings: () => Promise<void>;
   private pollingInterval: number | null = null;
+  private vaultName: string | null = null;
 
   constructor(
     db: DbService,
@@ -189,11 +200,106 @@ export class SyncService {
   }
 
   /**
+   * Ensure the vault exists on the server, creating it if necessary
+   * Returns true if vault is ready, false if sync should be skipped
+   */
+  private async ensureVaultExists(): Promise<boolean> {
+    if (!this.settings.serverUrl || !this.settings.accessToken) {
+      return false;
+    }
+
+    // Get the local vault name to use for creating/finding vault on server
+    const vaultName = this.getVaultName();
+    if (!vaultName) {
+      logger.error("Could not determine vault name", field("context", "Sync"));
+      return false;
+    }
+
+    try {
+      // First, check if we already have a valid vaultId that exists on server
+      if (this.settings.vaultId) {
+        // Verify the vault exists by listing vaults
+        const response = await this.makeAuthenticatedRequest(
+          `${this.settings.serverUrl}/sync/vaults`,
+          "GET"
+        ) as ListVaultsResponse;
+
+        const existingVault = response.vaults.find(v => v.id === this.settings.vaultId);
+        if (existingVault) {
+          logger.debug("Vault exists on server", field("context", "Sync"), field("vaultId", this.settings.vaultId));
+          return true;
+        }
+
+        // VaultId is set but doesn't exist on server - check if there's a vault with the same name
+        const vaultByName = response.vaults.find(v => v.name === vaultName);
+        if (vaultByName) {
+          logger.info("Found existing vault by name, updating vaultId", field("context", "Sync"), field("vaultId", vaultByName.id));
+          this.settings.vaultId = vaultByName.id;
+          await this.saveSettings();
+          return true;
+        }
+      } else {
+        // No vaultId set - check if there's already a vault with this name
+        const response = await this.makeAuthenticatedRequest(
+          `${this.settings.serverUrl}/sync/vaults`,
+          "GET"
+        ) as ListVaultsResponse;
+
+        const existingVault = response.vaults.find(v => v.name === vaultName);
+        if (existingVault) {
+          logger.info("Found existing vault by name", field("context", "Sync"), field("vaultId", existingVault.id));
+          this.settings.vaultId = existingVault.id;
+          await this.saveSettings();
+          return true;
+        }
+      }
+
+      // Vault doesn't exist - create it
+      logger.info("Creating vault on server", field("context", "Sync"), field("vaultName", vaultName));
+      const createResponse = await this.makeAuthenticatedRequest(
+        `${this.settings.serverUrl}/sync/vaults`,
+        "POST",
+        { name: vaultName }
+      ) as VaultResponse;
+
+      this.settings.vaultId = createResponse.id;
+      await this.saveSettings();
+      logger.info("Vault created on server", field("context", "Sync"), field("vaultId", createResponse.id));
+      return true;
+    } catch (error) {
+      logger.error("Failed to ensure vault exists", field("context", "Sync"), field("error", error));
+      return false;
+    }
+  }
+
+  /**
+   * Get the vault name from the app
+   * This is set by the plugin when it initializes
+   */
+  private getVaultName(): string | null {
+    return this.vaultName;
+  }
+
+  /**
+   * Set the vault name (called from plugin initialization)
+   */
+  setVaultName(name: string): void {
+    this.vaultName = name;
+  }
+
+  /**
    * Sync unsynced versions to the server
    */
   async sync(): Promise<void> {
-    if (!this.isEnabled()) {
-      logger.debug("Sync not enabled, skipping", field("context", "Sync"));
+    if (!this.settings.serverUrl || !this.settings.accessToken) {
+      logger.debug("Sync not configured, skipping", field("context", "Sync"));
+      return;
+    }
+
+    // Ensure vault exists on server before syncing
+    const vaultReady = await this.ensureVaultExists();
+    if (!vaultReady) {
+      logger.debug("Vault not ready, skipping sync", field("context", "Sync"));
       return;
     }
 
@@ -260,6 +366,7 @@ export class SyncService {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${this.settings.accessToken}`,
+          "X-Device-ID": this.settings.deviceId,
         },
         body: body ? JSON.stringify(body) : undefined,
       });
