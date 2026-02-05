@@ -220,7 +220,7 @@ export class SyncService {
       if (this.settings.vaultId) {
         // Verify the vault exists by listing vaults
         const response = await this.makeAuthenticatedRequest(
-          `${this.settings.serverUrl}/sync/vaults`,
+          `${this.settings.serverUrl}/vaults`,
           "GET"
         ) as ListVaultsResponse;
 
@@ -241,7 +241,7 @@ export class SyncService {
       } else {
         // No vaultId set - check if there's already a vault with this name
         const response = await this.makeAuthenticatedRequest(
-          `${this.settings.serverUrl}/sync/vaults`,
+          `${this.settings.serverUrl}/vaults`,
           "GET"
         ) as ListVaultsResponse;
 
@@ -257,7 +257,7 @@ export class SyncService {
       // Vault doesn't exist - create it
       logger.info("Creating vault on server", field("context", "Sync"), field("vaultName", vaultName));
       const createResponse = await this.makeAuthenticatedRequest(
-        `${this.settings.serverUrl}/sync/vaults`,
+        `${this.settings.serverUrl}/vaults`,
         "POST",
         { name: vaultName }
       ) as VaultResponse;
