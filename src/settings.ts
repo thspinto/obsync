@@ -28,7 +28,8 @@ export class ObsyncSettingTab extends PluginSettingTab {
 	constructor(app: App, plugin: Obsync) {
 		super(app, plugin);
 		this.plugin = plugin;
-		this.plugin.settings.vaultId = this.plugin.app.vault.getName()
+		// Note: vaultId is managed by SyncService.ensureVaultExists() during sync
+		// It gets set to the server-side vault ID, not the local vault name
 	}
 
 	display(): void {

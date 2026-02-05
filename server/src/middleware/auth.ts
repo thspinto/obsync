@@ -51,7 +51,7 @@ function verifyToken(token: string): Promise<JwtPayload> {
 
 /**
  * Auth middleware that verifies JWT tokens from Auth0
- * Extracts user_id (sub) and device_id from the token
+ * Extracts user_id (sub) from the token and device_id from X-Device-ID header
  */
 export const authMiddleware = createMiddleware<{
   Variables: {
@@ -59,9 +59,14 @@ export const authMiddleware = createMiddleware<{
   };
 }>(async (c, next) => {
   const authHeader = c.req.header("Authorization");
+  const deviceId = c.req.header("X-Device-ID");
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
     throw new HTTPException(401, { message: "Missing or invalid authorization header" });
+  }
+
+  if (!deviceId) {
+    throw new HTTPException(401, { message: "Missing X-Device-ID header" });
   }
 
   const token = authHeader.slice(7);
@@ -70,14 +75,9 @@ export const authMiddleware = createMiddleware<{
     const payload = await verifyToken(token);
 
     const userId = payload.sub;
-    const deviceId = payload.device_id as string | undefined;
 
     if (!userId) {
       throw new HTTPException(401, { message: "Invalid token: missing sub" });
-    }
-
-    if (!deviceId) {
-      throw new HTTPException(401, { message: "Invalid token: missing device_id" });
     }
 
     c.set("auth", { userId, deviceId });

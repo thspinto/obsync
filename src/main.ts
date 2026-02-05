@@ -33,6 +33,7 @@ export default class Obsync extends Plugin {
     // Initialize sync service
     logger.debug("Initializing sync service", field("context", "Plugin"));
     this.syncService = new SyncService(this.db, this.settings, () => this.saveSettings());
+    this.syncService.setVaultName(this.app.vault.getName());
 
     // Run startup scan
     logger.debug("Starting initial vault scan", field("context", "Plugin"));
